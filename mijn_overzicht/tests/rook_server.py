@@ -125,7 +125,7 @@ def verknipt_post(basis):
                 koek = f"session={stuk.value}"
     lichaam = urllib.parse.urlencode({
         "csrf_token": token,
-        "wachtwoord": "fout",
+        "wachtwoord": WACHTWOORD,
         "extra": "x" * 3000,
     }).encode()
     hoofd = (
@@ -151,9 +151,15 @@ def verknipt_post(basis):
     finally:
         tls.close()
     statusregel = data.split(b"\r\n", 1)[0]
-    if not statusregel.startswith(b"HTTP/1.1 ") or statusregel.endswith(b" 500"):
-        afbreken(f"Verknipt POST mislukte: {statusregel!r}")
-    print(f"Verknipt POST gelukt ({statusregel.decode()})")
+    kop = data.split(b"\r\n\r\n", 1)[0].decode("iso-8859-1", "replace")
+    locatie = ""
+    for regel in kop.split("\r\n"):
+        if regel.lower().startswith("location:"):
+            locatie = regel.split(":", 1)[1].strip()
+    pad = urllib.parse.urlsplit(locatie).path
+    if not statusregel.startswith(b"HTTP/1.1 302") or pad != "/":
+        afbreken(f"Verknipt POST kwam niet op het dashboard: {statusregel!r} {locatie!r}")
+    print("Verknipt POST logt in (302 naar /)")
 
 
 def upload_drie_mb(opener, basis):

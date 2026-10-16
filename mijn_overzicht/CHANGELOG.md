@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- Achter nginx telt het echte bezoekersadres, niet 127.0.0.1. Op gewoon http wordt een meegestuurde X-Forwarded-For genegeerd.
+- Elke foute inlogpoging telt voor dat adres, ook als er al vanaf andere adressen is geprobeerd. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit, werkt meteen.
+- Stopt nginx of de webserver, dan stopt de add-on en kan Home Assistant hem opnieuw starten.
+- Nginx draait zonder root, verbergt zijn versie, en een te groot verzoek krijgt een eigen pagina.
+
 ## 0.1.1
 
 - Https loopt via nginx naar de app op localhost. Een open verbinding of een groot bestand blokkeert de andere bezoekers niet meer.

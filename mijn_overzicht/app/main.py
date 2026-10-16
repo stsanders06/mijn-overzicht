@@ -12,14 +12,17 @@ import io
 import json
 import logging
 import os
+import pwd
 import re
 import secrets
+import signal
 import socket
 import sqlite3
 import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 from datetime import date, datetime, timedelta
@@ -29,11 +32,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, Response, abort, flash, redirect, render_template, request, send_file, session, url_for
 from jinja2 import StrictUndefined
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 # Hoort gelijk te lopen met version in config.yaml. In Home Assistant wint het
 # versienummer dat de Supervisor heeft geïnstalleerd; anders deze fallback.
-VERSIE_FALLBACK = "0.1.1"
+VERSIE_FALLBACK = "0.1.2"
 VERSIE = os.environ.get("ADDON_VERSION") or VERSIE_FALLBACK
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -53,8 +57,9 @@ VERLOPEN_DAGEN = 365
 
 WACHTWOORD_MINIMUM = 8
 # Vertraging begint pas na een paar mislukte pogingen en loopt exponentieel op.
-# Per adres blokkeert die pauze ook een juist wachtwoord. De accountpauze geldt
-# alleen voor foute pogingen: een juist wachtwoord vanaf een ander adres werkt meteen.
+# Per adres blokkeert die pauze ook een juist wachtwoord, en elke foute poging
+# telt mee, ook tijdens de accountpauze. Een juist wachtwoord vanaf een adres
+# dat zelf niet in de pauze zit, werkt meteen.
 PAUZE_NA_POGINGEN = 3
 IP_PLAFOND = 60
 ACCOUNT_PLAFOND = 8
@@ -265,6 +270,26 @@ DUMMY_HASH = generate_password_hash("niet-het-wachtwoord")
 POGINGEN_IP = {}
 POGINGEN_ACCOUNT = (0, None)
 HTTPS_ACTIEF = False
+
+
+class VertrouwProxyAlleenLokaal:
+    """X-Forwarded-For telt alleen in ssl-modus, en alleen vanaf localhost.
+
+    Nginx overschrijft die kop met het echte adres. Op gewoon http blijft het
+    TCP-adres gelden, ook als een bezoeker de kop zelf meestuurt.
+    """
+
+    def __init__(self, toepassing):
+        self.toepassing = toepassing
+        self.binnen = ProxyFix(toepassing, x_for=1)
+
+    def __call__(self, environ, start_response):
+        if HTTPS_ACTIEF and environ.get("REMOTE_ADDR") in {"127.0.0.1", "::1"}:
+            return self.binnen(environ, start_response)
+        return self.toepassing(environ, start_response)
+
+
+app.wsgi_app = VertrouwProxyAlleenLokaal(app.wsgi_app)
 
 
 def verbind():
@@ -898,9 +923,8 @@ def inloggen():
             wis_mislukkingen()
             start_sessie(request.form.get("onthoud") == "ja")
             return redirect(veilig_pad(verder) or url_for("index"))
-        # Foute gokken delen een korte accountpauze. Het juiste wachtwoord is hier al langs.
-        if account_wachttijd():
-            return redirect(url_for("inloggen"))
+        # Elke foute gok telt voor dit adres, ook als het account al in de pauze zit.
+        # Zo kan een aanvaller met steeds een nieuw adres niet onbeperkt blijven proberen.
         noteer_mislukking()
         if not str(hash_ or "").strip():
             melding("Er is geen wachtwoord ingesteld. Zet het in de add-on en start opnieuw.", "fout")
@@ -3171,37 +3195,59 @@ def _nginx_quotatie(pad):
     return '"' + pad.replace("\\", "/").replace('"', "") + '"'
 
 
-def start_nginx(poort, intern, cert, sleutel):
-    """TLS eindigt in nginx. Waitress ziet alleen http op localhost."""
-    log = logging.getLogger(__name__)
-    if not shutil_which("nginx"):
-        log.error("nginx ontbreekt in de container. Https kan niet starten.")
-        sys.exit(1)
-    tmp = tempfile.gettempdir()
-    os.makedirs(os.path.join(tmp, "nginx-client"), exist_ok=True)
-    os.makedirs(os.path.join(tmp, "nginx-proxy"), exist_ok=True)
-    config_pad = os.path.join(DATA_DIR, "nginx.conf")
-    pid = os.path.join(DATA_DIR, "nginx.pid")
-    config = "\n".join([
+def nginx_werkmap():
+    """Config en pid staan buiten /data, zodat een back-up ze niet meeneemt."""
+    return os.path.join(tempfile.gettempdir(), "mijn-overzicht-nginx")
+
+
+def nginx_gebruiker():
+    try:
+        return pwd.getpwnam("nginx")
+    except KeyError:
+        return None
+
+
+def bouw_nginx_config(poort, intern, cert, sleutel, pid, werkmap, foutlog=None):
+    foutlog = foutlog or os.path.join(werkmap, "error.log")
+    pagina_413 = (
+        "<!DOCTYPE html><html lang=\"nl\"><head><meta charset=\"utf-8\">"
+        "<title>Te groot</title></head><body><p>Dat is te veel in een keer.</p></body></html>"
+    )
+    return "\n".join([
         "worker_processes 1;",
-        "error_log /dev/stderr warn;",
+        f"error_log {foutlog} warn;",
         f"pid {pid};",
         "events { worker_connections 256; }",
         "http {",
+        "    server_tokens off;",
         "    access_log off;",
         "    client_max_body_size 32m;",
-        f"    client_body_temp_path {tmp}/nginx-client;",
-        f"    proxy_temp_path {tmp}/nginx-proxy;",
+        "    charset utf-8;",
+        f"    client_body_temp_path {werkmap}/client;",
+        f"    proxy_temp_path {werkmap}/proxy;",
         "    server {",
         f"        listen {poort} ssl;",
         "        server_name _;",
         f"        ssl_certificate {_nginx_quotatie(cert)};",
         f"        ssl_certificate_key {_nginx_quotatie(sleutel)};",
         "        ssl_protocols TLSv1.2 TLSv1.3;",
+        "        error_page 413 @te_groot;",
+        "        location @te_groot {",
+        "            internal;",
+        "            default_type text/html;",
+        '            add_header X-Content-Type-Options "nosniff" always;',
+        '            add_header Referrer-Policy "same-origin" always;',
+        '            add_header X-Frame-Options "DENY" always;',
+        '            add_header Content-Security-Policy "default-src \'none\'; frame-ancestors \'none\'" always;',
+        '            add_header Cache-Control "no-store" always;',
+        f'            add_header Strict-Transport-Security "max-age={HSTS_SECONDEN}" always;',
+        f"            return 413 '{pagina_413}';",
+        "        }",
         "        location / {",
         f"            proxy_pass http://127.0.0.1:{intern};",
         "            proxy_http_version 1.1;",
         "            proxy_set_header Host $host;",
+        "            proxy_set_header X-Real-IP $remote_addr;",
         "            proxy_set_header X-Forwarded-For $remote_addr;",
         "            proxy_set_header X-Forwarded-Proto https;",
         "            proxy_read_timeout 120s;",
@@ -3211,23 +3257,134 @@ def start_nginx(poort, intern, cert, sleutel):
         "}",
         "",
     ])
-    with open(config_pad, "w", encoding="utf-8") as bestand:
-        bestand.write(config)
-    test = subprocess.run(["nginx", "-t", "-c", config_pad], capture_output=True, text=True)
-    if test.returncode != 0:
-        log.error("nginx kan niet starten: %s", (test.stderr or test.stdout or "").strip())
+
+
+def _kopieer_geheim(bron, doel, uid, gid):
+    with open(bron, "rb") as bestand:
+        data = bestand.read()
+    fd = os.open(doel, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, data)
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+
+
+def _volg_nginx_log(pad):
+    """Nginx draait zonder root en kan /dev/stderr niet openen. Dit kopieert zijn log."""
+    while True:
+        try:
+            with open(pad, "r", encoding="utf-8", errors="replace") as bron:
+                while True:
+                    regel = bron.readline()
+                    if not regel:
+                        time.sleep(0.2)
+                        continue
+                    sys.stderr.write(regel)
+                    sys.stderr.flush()
+        except OSError:
+            time.sleep(0.1)
+
+
+def _sterf_met_ouder():
+    """Nginx stopt mee als Python verdwijnt, ook zonder opruimen."""
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None)
+        prctl = getattr(libc, "prctl", None)
+        if prctl is not None:
+            prctl(1, int(signal.SIGTERM), 0, 0, 0)
+    except Exception:
+        return None
+    return None
+
+
+def bewaak_nginx(proc, afsluiten, pid, stop=os._exit):
+    code = proc.wait()
+    if afsluiten.is_set():
+        return
+    logging.getLogger(__name__).error(
+        "nginx is gestopt (code %s). De add-on stopt zodat hij opnieuw kan starten.",
+        code,
+    )
+    try:
+        os.remove(pid)
+    except OSError:
+        pass
+    stop(1)
+
+
+def stop_nginx(proc, afsluiten, pid):
+    afsluiten.set()
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    try:
+        os.remove(pid)
+    except OSError:
+        pass
+
+
+def start_nginx(poort, intern, cert, sleutel):
+    """TLS eindigt in nginx. Waitress ziet alleen http op localhost."""
+    log = logging.getLogger(__name__)
+    if not shutil_which("nginx"):
+        log.error("nginx ontbreekt in de container. Https kan niet starten.")
         sys.exit(1)
-    proc = subprocess.Popen(["nginx", "-c", config_pad, "-g", "daemon off;"])
-
-    def stop():
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-
-    atexit.register(stop)
+    gebruiker = nginx_gebruiker()
+    if gebruiker is None:
+        log.error("De gebruiker nginx ontbreekt. Https kan niet starten.")
+        sys.exit(1)
+    werkmap = nginx_werkmap()
+    os.makedirs(os.path.join(werkmap, "client"), mode=0o700, exist_ok=True)
+    os.makedirs(os.path.join(werkmap, "proxy"), mode=0o700, exist_ok=True)
+    for mapnaam in (werkmap, os.path.join(werkmap, "client"), os.path.join(werkmap, "proxy")):
+        os.chown(mapnaam, gebruiker.pw_uid, gebruiker.pw_gid)
+        os.chmod(mapnaam, 0o700)
+    cert_kopie = os.path.join(werkmap, "cert.pem")
+    sleutel_kopie = os.path.join(werkmap, "key.pem")
+    _kopieer_geheim(cert, cert_kopie, gebruiker.pw_uid, gebruiker.pw_gid)
+    _kopieer_geheim(sleutel, sleutel_kopie, gebruiker.pw_uid, gebruiker.pw_gid)
+    pid = os.path.join(werkmap, "nginx.pid")
+    foutlog = os.path.join(werkmap, "error.log")
+    config_pad = os.path.join(werkmap, "nginx.conf")
+    config = bouw_nginx_config(poort, intern, cert_kopie, sleutel_kopie, pid, werkmap, foutlog)
+    fd = os.open(config_pad, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, config.encode("utf-8"))
+        os.fchown(fd, gebruiker.pw_uid, gebruiker.pw_gid)
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+    threading.Thread(target=_volg_nginx_log, args=(foutlog,), name="nginx-log", daemon=True).start()
+    test = subprocess.run(
+        ["nginx", "-t", "-c", config_pad],
+        capture_output=True,
+        text=True,
+        user=gebruiker.pw_uid,
+        group=gebruiker.pw_gid,
+    )
+    if test.returncode != 0:
+        extra = ""
+        try:
+            with open(foutlog, encoding="utf-8", errors="replace") as bestand:
+                extra = bestand.read()[-2000:]
+        except OSError:
+            extra = ""
+        log.error("nginx kan niet starten: %s %s", (test.stderr or test.stdout or "").strip(), extra.strip())
+        sys.exit(1)
+    proc = subprocess.Popen(
+        ["nginx", "-c", config_pad, "-g", "daemon off;"],
+        user=gebruiker.pw_uid,
+        group=gebruiker.pw_gid,
+        preexec_fn=_sterf_met_ouder,
+    )
     deadline = time.time() + 5
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -3235,11 +3392,13 @@ def start_nginx(poort, intern, cert, sleutel):
             sys.exit(1)
         try:
             with socket.create_connection(("127.0.0.1", poort), timeout=0.2):
-                return
+                if os.path.exists(pid):
+                    os.chmod(pid, 0o600)
+                return proc, pid
         except OSError:
             time.sleep(0.05)
     log.error("nginx luistert niet op poort %s.", poort)
-    stop()
+    proc.terminate()
     sys.exit(1)
 
 
@@ -3260,12 +3419,34 @@ def start_server(poort):
             sys.exit(1)
         cert, sleutel = ssl_paden()
         intern = INTERN_POORT if poort != INTERN_POORT else INTERN_POORT + 1
-        start_nginx(poort, intern, cert, sleutel)
+        proc, pid = start_nginx(poort, intern, cert, sleutel)
+        afsluiten = threading.Event()
+        threading.Thread(
+            target=bewaak_nginx,
+            args=(proc, afsluiten, pid),
+            name="nginx-bewaker",
+            daemon=True,
+        ).start()
+
+        def bij_stop(signum, _frame):
+            log.info("Stopverzoek ontvangen (%s). De add-on stopt.", signum)
+            stop_nginx(proc, afsluiten, pid)
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, bij_stop)
+        atexit.register(lambda: stop_nginx(proc, afsluiten, pid))
         log.info("Mijn Overzicht %s is bereikbaar op https://0.0.0.0:%s", VERSIE, poort)
         from waitress import serve
 
-        serve(app, host="127.0.0.1", port=intern, threads=8, url_scheme="https")
-        return
+        code = 1
+        try:
+            serve(app, host="127.0.0.1", port=intern, threads=8, url_scheme="https")
+            log.error("De webserver is gestopt. De add-on stopt zodat hij opnieuw kan starten.")
+        except SystemExit as einde:
+            code = einde.code if isinstance(einde.code, int) else 0
+        finally:
+            stop_nginx(proc, afsluiten, pid)
+        sys.exit(code)
     log.warning(
         "ssl staat uit. Het verkeer op poort %s is onversleuteld http. "
         "Zet deze poort niet open naar internet; gebruik het eigen netwerk, een VPN, of zet ssl aan.",
@@ -3276,8 +3457,12 @@ def start_server(poort):
         from waitress import serve
 
         serve(app, host="0.0.0.0", port=poort, threads=4)
+        log.error("De webserver is gestopt. De add-on stopt zodat hij opnieuw kan starten.")
+        sys.exit(1)
     except ImportError:
         app.run(host="0.0.0.0", port=poort)
+        log.error("De webserver is gestopt. De add-on stopt zodat hij opnieuw kan starten.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

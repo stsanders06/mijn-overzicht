@@ -1,6 +1,8 @@
 """Inlog, eerste keer, CSRF, sessies en het wachtwoord uit de add-on."""
 import json
+import os
 import pathlib
+import threading
 
 from conftest import TEST_HASH, TEST_WACHTWOORD
 import main as overzicht
@@ -257,6 +259,88 @@ def test_inlog_legt_lege_hash_na_back_up_uit(uitgelogde_client):
         follow_redirects=True,
     )
     assert "Dashboard" not in antwoord.get_data(as_text=True)
+
+
+def test_elke_foute_poging_telt_ook_bij_draaiende_adressen(app, monkeypatch):
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    adressen = [f"203.0.113.{n}" for n in range(1, 13)]
+    for _ in range(8):
+        for ip in adressen:
+            antwoord = _inlog_vanaf(app, ip, "fout")
+            assert "/inloggen" in antwoord.headers["Location"]
+    for ip in adressen:
+        assert overzicht.POGINGEN_IP[ip][0] == 3
+    assert overzicht.POGINGEN_ACCOUNT[0] == len(adressen) * 3
+    goed = _inlog_vanaf(app, "198.51.100.77", TEST_WACHTWOORD)
+    assert goed.headers["Location"].endswith("/")
+
+
+def _inlog_via_proxy(app, ip, wachtwoord, peer="127.0.0.1"):
+    with app.test_client() as browser:
+        with browser.session_transaction() as sessie:
+            sessie["csrf_token"] = "test-token"
+        return browser.post(
+            "/inloggen",
+            data={"csrf_token": "test-token", "wachtwoord": wachtwoord},
+            environ_base={"REMOTE_ADDR": peer},
+            headers={"X-Forwarded-For": ip},
+            follow_redirects=False,
+        )
+
+
+def test_http_negeert_x_forwarded_for(app):
+    overzicht.HTTPS_ACTIEF = False
+    antwoord = _inlog_via_proxy(app, "198.51.100.9", "fout", peer="203.0.113.10")
+    assert "/inloggen" in antwoord.headers["Location"]
+    assert overzicht.POGINGEN_IP["203.0.113.10"][0] == 1
+    assert "198.51.100.9" not in overzicht.POGINGEN_IP
+
+
+def test_https_gebruikt_het_adres_van_nginx_alleen_vanaf_localhost(app, monkeypatch):
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    overzicht.HTTPS_ACTIEF = True
+    try:
+        for _ in range(4):
+            _inlog_via_proxy(app, "203.0.113.8", "fout")
+        assert overzicht.POGINGEN_IP["203.0.113.8"][0] == 3
+        assert "127.0.0.1" not in overzicht.POGINGEN_IP
+        goed = _inlog_via_proxy(app, "198.51.100.8", TEST_WACHTWOORD)
+        assert goed.headers["Location"].endswith("/")
+        genegeerd = _inlog_via_proxy(app, "198.51.100.9", "fout", peer="203.0.113.40")
+        assert "/inloggen" in genegeerd.headers["Location"]
+        assert overzicht.POGINGEN_IP["203.0.113.40"][0] == 1
+        assert "198.51.100.9" not in overzicht.POGINGEN_IP
+    finally:
+        overzicht.HTTPS_ACTIEF = False
+
+
+def test_nginx_config_overschrijft_het_adres_en_geeft_413(app):
+    tekst = overzicht.bouw_nginx_config(8320, 18080, "/tmp/cert.pem", "/tmp/key.pem", "/tmp/nginx.pid", "/tmp/nginx")
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in tekst
+    assert "proxy_add_x_forwarded_for" not in tekst
+    assert "server_tokens off;" in tekst
+    assert "error_page 413 @te_groot;" in tekst
+    assert "X-Frame-Options" in tekst
+    assert "Content-Security-Policy" in tekst
+    assert overzicht.nginx_werkmap() != overzicht.DATA_DIR
+    assert not overzicht.nginx_werkmap().startswith(overzicht.DATA_DIR + os.sep)
+
+
+def test_gestopte_nginx_stopt_de_addon():
+    class Nep:
+        def wait(self):
+            return 9
+
+    gestopt = []
+    afsluiten = threading.Event()
+    overzicht.bewaak_nginx(Nep(), afsluiten, os.path.join(overzicht.DATA_DIR, "ontbreekt.pid"), stop=gestopt.append)
+    assert gestopt == [1]
+    afsluiten.set()
+    gestopt.clear()
+    overzicht.bewaak_nginx(Nep(), afsluiten, os.path.join(overzicht.DATA_DIR, "ontbreekt.pid"), stop=gestopt.append)
+    assert gestopt == []
 
 
 def test_post_zonder_csrf_wordt_geweigerd(client):
