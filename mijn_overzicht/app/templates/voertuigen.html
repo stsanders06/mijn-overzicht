@@ -1,0 +1,24 @@
+{% extends "_layout.html" %}
+{% block titel %}Voertuigen{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Voertuigen</h1>
+    <p class="lead">Kenteken, APK en banden. Geen kilometerstand.</p>
+  </div>
+  <a class="knop" href="{{ url_for('voertuig_nieuw') }}">Nieuw voertuig</a>
+</header>
+{% for item in items %}
+<article class="kaart">
+  <a class="rij-link" href="{{ url_for('voertuig_bewerk', voertuig_id=item.id) }}">
+    <span class="naam">{{ item.soort_label }} · {{ item.titel }}</span>
+    <span>{{ item.kenteken }}</span>
+  </a>
+  <p class="stil">{% if item.bouwjaar %}Bouwjaar {{ item.bouwjaar }}{% endif %}{% if item.apk_tot %} · APK tot {{ item.apk_tot|datum_nl }}{% endif %}{% if item.bandenmaat %} · banden {{ item.bandenmaat }}{% endif %}</p>
+  {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
+  {% include "_chips.html" %}
+</article>
+{% else %}
+<p class="kaart stil">Nog geen voertuigen.</p>
+{% endfor %}
+{% endblock %}

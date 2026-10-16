@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block titel %}Mijn Overzicht{% endblock %}</title>
+<link rel="icon" href="{{ url_for('favicon') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='kaal.css') }}">
+</head>
+<body>
+<main class="paneel">
+  <div class="streep"></div>
+  {% with berichten = get_flashed_messages(with_categories=true) %}
+  {% if berichten %}
+    {% for soort, ruw in berichten %}
+    {% set bericht = ruw|uit_json %}
+    <p class="toast" role="status">{{ bericht.tekst }}</p>
+    {% endfor %}
+  {% endif %}
+  {% endwith %}
+  {% block inhoud %}{% endblock %}
+</main>
+</body>
+</html>

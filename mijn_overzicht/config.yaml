@@ -1,0 +1,37 @@
+---
+name: Mijn Overzicht
+version: "0.1.1"
+slug: mijn_overzicht
+description: >-
+  Persoonlijk overzicht van vaste lasten, verzekeringen, voertuigen,
+  bezittingen en documenten. Alleen via de browser, niet in Home Assistant.
+url: https://github.com/stsanders06/mijn-overzicht/tree/main/mijn_overzicht
+arch:
+  - aarch64
+  - amd64
+init: false
+ingress: false
+homeassistant_api: false
+auth_api: false
+host_network: false
+boot: auto
+map:
+  - ssl:ro
+ports:
+  8320/tcp: 8320
+ports_description:
+  8320/tcp: >-
+    Webinterface op het eigen netwerk. Zet deze poort niet open naar internet.
+    Met ssl uit is het http, met ssl aan https. Er is geen zijbalk in Home Assistant.
+options:
+  wachtwoord: ""
+  log_level: info
+  ssl: false
+  certfile: fullchain.pem
+  keyfile: privkey.pem
+schema:
+  wachtwoord: password?
+  log_level: list(trace|debug|info|notice|warning|error|fatal)
+  ssl: bool
+  certfile: str
+  keyfile: str

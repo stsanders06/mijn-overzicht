@@ -1,0 +1,20 @@
+{% extends "_kaal.html" %}
+{% block titel %}Wachtwoord kiezen · Mijn Overzicht{% endblock %}
+{% block inhoud %}
+<h1>Kies een wachtwoord</h1>
+<p>Dit scherm is niet open. Je hebt de eenmalige code uit het log van de add-on nodig, of je zet het wachtwoord in de add-on en start opnieuw.</p>
+{% if wacht %}
+<p class="wacht">Te veel pogingen. Wacht {{ wacht }} seconden.</p>
+{% endif %}
+<form method="post" action="{{ url_for('account_instellen') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="code">Instelcode</label>
+  <input id="code" name="code" autocomplete="one-time-code" required>
+  <label for="wachtwoord">Wachtwoord</label>
+  <input id="wachtwoord" name="wachtwoord" type="password" autocomplete="new-password" required>
+  <label for="nogmaals">Nogmaals</label>
+  <input id="nogmaals" name="nogmaals" type="password" autocomplete="new-password" required>
+  <p>Minstens {{ minimum }} tekens. Daarna opent het overzicht leeg.</p>
+  <button type="submit">Opslaan en openen</button>
+</form>
+{% endblock %}

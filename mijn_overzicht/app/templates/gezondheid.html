@@ -1,0 +1,40 @@
+{% extends "_layout.html" %}
+{% block titel %}Gezondheid / noodinfo{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Gezondheid / noodinfo</h1>
+    <p class="lead">Bloedgroep, medicijnen, allergieën en een noodcontact. Er is maar één kaart.</p>
+  </div>
+</header>
+<form class="kaart" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="bloedgroep">Bloedgroep</label>
+  <select id="bloedgroep" name="bloedgroep">
+    {% for groep in BLOEDGROEPEN %}
+    <option value="{{ groep }}"{% if waarden.bloedgroep == groep %} selected{% endif %}>{{ groep or "Niet ingevuld" }}</option>
+    {% endfor %}
+  </select>
+  <label for="medicijnen">Medicijnen</label>
+  <textarea id="medicijnen" name="medicijnen">{{ waarden.medicijnen }}</textarea>
+  <label for="allergieen">Allergieën</label>
+  <textarea id="allergieen" name="allergieen">{{ waarden.allergieen }}</textarea>
+  <label for="nood_naam">Noodcontact</label>
+  <input id="nood_naam" name="nood_naam" value="{{ waarden.nood_naam }}">
+  <div class="twee">
+    <div>
+      <label for="nood_telefoon">Telefoon</label>
+      <input id="nood_telefoon" name="nood_telefoon" value="{{ waarden.nood_telefoon }}" inputmode="tel">
+    </div>
+    <div>
+      <label for="nood_relatie">Relatie</label>
+      <input id="nood_relatie" name="nood_relatie" value="{{ waarden.nood_relatie }}">
+    </div>
+  </div>
+  {% if tel %}<p><a class="chip" href="{{ tel }}">Bellen</a></p>{% endif %}
+  <label for="notitie">Notitie</label>
+  <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
+  <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
+</form>
+{% include "_gekoppeld.html" %}
+{% endblock %}

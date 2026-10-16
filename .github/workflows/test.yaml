@@ -1,0 +1,100 @@
+---
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Pytest en WebKit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pakketten installeren
+        run: |
+          pip install -r mijn_overzicht/app/requirements.txt
+          pip install -r mijn_overzicht/tests/requirements.txt
+          python -m playwright install --with-deps webkit
+
+      - name: Pytest
+        run: python -m pytest
+
+  addon-image:
+    name: Add-on image (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bouw het amd64-image
+        run: |
+          docker build \
+            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20 \
+            --build-arg BUILD_VERSION=0.1.1 \
+            --tag mijn-overzicht:test \
+            ./mijn_overzicht
+
+      - name: Http, login en POST
+        run: |
+          mkdir -p /tmp/addon-data
+          printf '%s\n' '{"wachtwoord":"rooktest-wachtwoord","log_level":"info","ssl":false,"certfile":"fullchain.pem","keyfile":"privkey.pem"}' > /tmp/addon-data/options.json
+          docker run -d --name mijn-overzicht-test \
+            -v /tmp/addon-data:/data \
+            -p 8320:8320 \
+            mijn-overzicht:test
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8320/inloggen; then
+              echo "Loginpagina antwoordt na ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              docker logs mijn-overzicht-test
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs mijn-overzicht-test 2>&1 | grep -q "ssl staat uit"
+          docker logs mijn-overzicht-test 2>&1 | grep -q "bereikbaar op http://"
+          python3 mijn_overzicht/tests/rook_server.py http://127.0.0.1:8320 \
+            || { docker logs mijn-overzicht-test; exit 1; }
+          docker rm -f mijn-overzicht-test
+
+      - name: Https, luie verbinding, verknipt POST en upload
+        run: |
+          mkdir -p /tmp/addon-data /tmp/addon-ssl
+          openssl req -x509 -newkey rsa:2048 \
+            -keyout /tmp/addon-ssl/privkey.pem \
+            -out /tmp/addon-ssl/fullchain.pem \
+            -days 2 -nodes -subj '/CN=localhost'
+          printf '%s\n' '{"wachtwoord":"rooktest-wachtwoord","log_level":"info","ssl":true,"certfile":"fullchain.pem","keyfile":"privkey.pem"}' > /tmp/addon-data/options.json
+          docker run -d --name mijn-overzicht-https \
+            -v /tmp/addon-data:/data \
+            -v /tmp/addon-ssl:/ssl:ro \
+            -p 8320:8320 \
+            mijn-overzicht:test
+          for i in $(seq 1 30); do
+            if curl -fsSk -o /dev/null https://127.0.0.1:8320/inloggen; then
+              echo "Https-loginpagina antwoordt na ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              docker logs mijn-overzicht-https
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs mijn-overzicht-https 2>&1 | grep -q "bereikbaar op https://"
+          python3 mijn_overzicht/tests/rook_server.py https://127.0.0.1:8320 \
+            || { docker logs mijn-overzicht-https; exit 1; }
+          docker rm -f mijn-overzicht-https

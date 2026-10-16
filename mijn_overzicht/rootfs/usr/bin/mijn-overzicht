@@ -1,0 +1,33 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# Start Mijn Overzicht
+# ==============================================================================
+# Het wachtwoord en ssl leest de app zelf uit /data/options.json. De versie
+# komt uit de image (ADDON_VERSION). Die vegen we hier niet leeg, en we vragen
+# de Supervisor-API niet om de versie.
+log_level="info"
+if [ -f /data/options.json ]; then
+    gelezen="$(python3 -c 'import json
+try:
+    waarde = json.load(open("/data/options.json")).get("log_level") or "info"
+    print(waarde if isinstance(waarde, str) else "info")
+except Exception:
+    print("info")')"
+    if [ -n "${gelezen}" ]; then
+        log_level="${gelezen}"
+    fi
+fi
+
+export LOG_LEVEL="${log_level}"
+export DATA_DIR="/data"
+export PORT="8320"
+
+# De containerklok is vaak UTC. Zonder TZ is het tussen middernacht en 02:00
+# in Nederland nog gisteren, en kloppen vervaldatums en garantie niet.
+if [ -z "${TZ:-}" ]; then
+    export TZ="Europe/Amsterdam"
+fi
+
+bashio::log.info "Mijn Overzicht wordt gestart op poort ${PORT}..."
+
+exec python3 /opt/app/main.py

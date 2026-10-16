@@ -1,0 +1,20 @@
+{% if bestanden %}
+<h2>Bestanden</h2>
+{% for bestand in bestanden %}
+<article class="bijlage">
+  <p>{{ bestand.naam }}{% if bestand.rol == 'bon' %} · bon{% elif bestand.rol == 'polis' %} · polis{% endif %}</p>
+  {% if bestand.is_plaatje %}
+  <img src="{{ url_for('bestand_zien', bestand_id=bestand.id) }}" alt="{{ bestand.naam }}">
+  {% elif bestand.is_pdf %}
+  <iframe src="{{ url_for('bestand_zien', bestand_id=bestand.id) }}" title="{{ bestand.naam }}"></iframe>
+  {% endif %}
+  <p class="acties">
+    <a class="knop rust" href="{{ url_for('bestand_zien', bestand_id=bestand.id) }}">Openen</a>
+  </p>
+  <form method="post" action="{{ url_for('bestand_weg', bestand_id=bestand.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="knop gevaar" type="submit" data-bevestig="Dit bestand weghalen?">Weghalen</button>
+  </form>
+</article>
+{% endfor %}
+{% endif %}

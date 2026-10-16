@@ -1,0 +1,24 @@
+{% extends "_layout.html" %}
+{% block titel %}Documenten{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Documenten</h1>
+    <p class="lead">Bestanden en links die niet bij één tab horen. Vervaldatum komt op het dashboard.</p>
+  </div>
+  <a class="knop" href="{{ url_for('document_nieuw') }}">Nieuw document</a>
+</header>
+{% for item in items %}
+<article class="kaart">
+  <a class="rij-link" href="{{ url_for('document_bewerk', document_id=item.id) }}">
+    <span class="naam">{{ item.titel }}</span>
+    <span>{% if item.verval %}tot {{ item.verval|datum_nl }}{% endif %}</span>
+  </a>
+  {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
+  {% if item.link_ok %}<p><a class="chip" href="{{ item.link_ok }}">Open link</a></p>{% endif %}
+  {% include "_chips.html" %}
+</article>
+{% else %}
+<p class="kaart stil">Nog geen documenten.</p>
+{% endfor %}
+{% endblock %}

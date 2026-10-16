@@ -1,0 +1,35 @@
+{% extends "_layout.html" %}
+{% block titel %}{{ titel }}{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>{{ titel }}</h1>
+  </div>
+  <a class="knop rust" href="{{ url_for('contacten') }}">Terug</a>
+</header>
+<form class="kaart" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="naam">Naam</label>
+  <input id="naam" name="naam" value="{{ waarden.naam }}" required>
+  <label for="rol">Rol</label>
+  <select id="rol" name="rol">
+    {% for code, label in CONTACT_ROLLEN %}
+    <option value="{{ code }}"{% if waarden.rol == code %} selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <label for="telefoon">Telefoon</label>
+  <input id="telefoon" name="telefoon" value="{{ waarden.telefoon }}" inputmode="tel">
+  <label for="email">E-mail</label>
+  <input id="email" name="email" type="email" value="{{ waarden.email }}">
+  <label for="notitie">Notitie</label>
+  <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
+  <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
+</form>
+{% if koppel_id %}
+<form method="post" action="{{ url_for('contact_weg', contact_id=koppel_id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="knop gevaar" type="submit" data-bevestig="Dit contact weghalen?">Weghalen</button>
+</form>
+{% endif %}
+{% include "_gekoppeld.html" %}
+{% endblock %}

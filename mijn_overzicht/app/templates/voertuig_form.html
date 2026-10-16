@@ -1,0 +1,72 @@
+{% extends "_layout.html" %}
+{% block titel %}{{ titel }}{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>{{ titel }}</h1>
+    <p class="lead">De verzekering hieronder wordt een klikbare koppeling. Extra polissen en documenten koppel je daarna.</p>
+  </div>
+  <a class="knop rust" href="{{ url_for('voertuigen') }}">Terug</a>
+</header>
+<form class="kaart" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="twee">
+    <div>
+      <label for="soort">Soort</label>
+      <select id="soort" name="soort" required>
+        <option value="">Kies</option>
+        {% for code, label in VOERTUIG_SOORTEN %}
+        <option value="{{ code }}"{% if waarden.soort == code %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="kenteken">Kenteken</label>
+      <input id="kenteken" name="kenteken" value="{{ waarden.kenteken }}" autocapitalize="characters">
+    </div>
+  </div>
+  <div class="twee">
+    <div>
+      <label for="merk">Merk</label>
+      <input id="merk" name="merk" value="{{ waarden.merk }}" required>
+    </div>
+    <div>
+      <label for="model">Model</label>
+      <input id="model" name="model" value="{{ waarden.model }}">
+    </div>
+  </div>
+  <div class="twee">
+    <div>
+      <label for="bouwjaar">Bouwjaar</label>
+      <input id="bouwjaar" name="bouwjaar" inputmode="numeric" value="{{ waarden.bouwjaar }}">
+    </div>
+    <div>
+      <label for="apk_tot">APK tot</label>
+      <input id="apk_tot" name="apk_tot" type="date" value="{{ waarden.apk_tot }}">
+    </div>
+  </div>
+  <label for="verzekering_id">Verzekering</label>
+  <select id="verzekering_id" name="verzekering_id">
+    <option value="">Geen</option>
+    {% for optie in verzekeringen %}
+    <option value="{{ optie.id }}"{% if waarden.verzekering_id == optie.id|string %} selected{% endif %}>{{ optie.label }}</option>
+    {% endfor %}
+  </select>
+  <label for="bandenmaat">Bandenmaat</label>
+  <input id="bandenmaat" name="bandenmaat" value="{{ waarden.bandenmaat }}">
+  <label for="notitie">Notitie</label>
+  <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
+  <label for="bestanden">Documenten (foto of PDF, ook uit de fotobibliotheek)</label>
+  <input id="bestanden" name="bestanden" type="file" accept="image/*,.heic,.heif,application/pdf,.pdf" multiple>
+  <p class="bestandsnamen stil"></p>
+  <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
+  {% include "_bestanden.html" %}
+</form>
+{% if koppel_id %}
+<form method="post" action="{{ url_for('voertuig_weg', voertuig_id=koppel_id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="knop gevaar" type="submit" data-bevestig="Dit voertuig weghalen?">Weghalen</button>
+</form>
+{% endif %}
+{% include "_gekoppeld.html" %}
+{% endblock %}

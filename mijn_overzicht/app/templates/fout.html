@@ -1,0 +1,7 @@
+{% extends "_layout.html" %}
+{% block titel %}{{ titel }}{% endblock %}
+{% block inhoud %}
+<h1>{{ titel }}</h1>
+<p>{{ tekst }}</p>
+<p><a class="knop" href="{{ url_for('index') }}">Naar het overzicht</a></p>
+{% endblock %}

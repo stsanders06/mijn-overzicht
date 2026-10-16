@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block titel %}Overzicht{% endblock %} · Mijn Overzicht</title>
+<link rel="icon" href="{{ url_for('favicon') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='opmaak.css') }}">
+
+</head>
+<body>
+<div class="app">
+<aside class="zij">
+  <a class="merk" href="{{ url_for('index') }}">
+    <span class="merk-merk" aria-hidden="true"></span>
+    <span class="merk-naam">Mijn Overzicht</span>
+  </a>
+  <form class="zoek" action="{{ url_for('zoeken') }}" method="get">
+    <input type="search" name="q" value="{{ zoek_q }}" placeholder="Zoeken" aria-label="Zoeken" enterkeyhint="search">
+    <button class="knop" type="submit">Zoek</button>
+  </form>
+  {% for sleutel, endpoint, naam in nav %}
+  <a class="zij-link{% if actief == sleutel %} actief{% endif %}" href="{{ url_for(endpoint) }}"{% if actief == sleutel %} aria-current="page"{% endif %}>{{ naam }}</a>
+  {% endfor %}
+  <form method="post" action="{{ url_for('uitloggen') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="zij-uit" type="submit">Uitloggen</button>
+  </form>
+  <p class="versie">Versie {{ versie }}</p>
+</aside>
+<main class="hoofd">
+  <form class="zoek-mobiel" action="{{ url_for('zoeken') }}" method="get">
+    <input type="search" name="q" value="{{ zoek_q }}" placeholder="Zoeken" aria-label="Zoeken" enterkeyhint="search">
+    <button class="knop" type="submit">Zoek</button>
+  </form>
+  {% with berichten = get_flashed_messages(with_categories=true) %}
+  {% if berichten %}
+  <div class="toasts">
+    {% for soort, ruw in berichten %}
+    {% set bericht = ruw|uit_json %}
+    <p class="toast {{ soort }}" role="status">{{ bericht.tekst }}<button type="button" class="toast-weg">Sluiten</button></p>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endwith %}
+  {% block inhoud %}{% endblock %}
+</main>
+</div>
+<nav class="balk" aria-label="Navigatie">
+  <a href="{{ url_for('index') }}"{% if actief == 'dashboard' %} class="actief" aria-current="page"{% endif %}>Overzicht</a>
+  <a href="{{ url_for('lasten') }}"{% if actief == 'lasten' %} class="actief" aria-current="page"{% endif %}>Lasten</a>
+  <a href="{{ url_for('verzekeringen') }}"{% if actief == 'verzekeringen' %} class="actief" aria-current="page"{% endif %}>Polissen</a>
+  <a href="{{ url_for('bezittingen') }}"{% if actief == 'bezittingen' %} class="actief" aria-current="page"{% endif %}>Spullen</a>
+  <details class="meer">
+    <summary class="balk-item{% if actief in ['voertuigen', 'inkomen', 'datums', 'contacten', 'documenten', 'gezondheid'] %} actief{% endif %}">Meer</summary>
+    <div class="meer-vel">
+      <a href="{{ url_for('voertuigen') }}"{% if actief == 'voertuigen' %} class="actief"{% endif %}>Voertuigen</a>
+      <a href="{{ url_for('inkomen') }}"{% if actief == 'inkomen' %} class="actief"{% endif %}>Inkomen &amp; werk</a>
+      <a href="{{ url_for('datums') }}"{% if actief == 'datums' %} class="actief"{% endif %}>Belangrijke datums</a>
+      <a href="{{ url_for('contacten') }}"{% if actief == 'contacten' %} class="actief"{% endif %}>Contacten</a>
+      <a href="{{ url_for('documenten') }}"{% if actief == 'documenten' %} class="actief"{% endif %}>Documenten</a>
+      <a href="{{ url_for('gezondheid') }}"{% if actief == 'gezondheid' %} class="actief"{% endif %}>Gezondheid / noodinfo</a>
+      <form method="post" action="{{ url_for('uitloggen') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Uitloggen</button>
+      </form>
+    </div>
+  </details>
+</nav>
+<script src="{{ url_for('static', filename='gedrag.js') }}"></script>
+</body>
+</html>

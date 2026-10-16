@@ -1,0 +1,73 @@
+{% extends "_layout.html" %}
+{% block titel %}Dashboard{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="lead">Vaste lasten, wat er binnenkort afloopt, en wat je nog kunt opzeggen.</p>
+  </div>
+</header>
+<section class="cijfers">
+  <article class="cijfer"><small>Per maand</small><b class="bedrag">€ {{ maand|bedrag }}</b></article>
+  <article class="cijfer"><small>Per jaar</small><b class="bedrag">€ {{ jaar|bedrag }}</b></article>
+  <article class="cijfer"><small>Netto per maand</small><b class="bedrag">{% if netto is not none %}€ {{ netto|bedrag }}{% else %}—{% endif %}</b></article>
+</section>
+<p class="stil">{{ aantal_lasten }} vaste last{% if aantal_lasten != 1 %}en{% endif %}. Premies die bij een verzekering horen tellen één keer mee.</p>
+
+<section class="kaart">
+  <h2>Binnenkort</h2>
+  {% for item in agenda_items %}
+  <a class="rij-link" href="{{ item.url }}">
+    <span class="naam">{{ item.soort }} · {{ item.titel }}</span>
+    <span>{{ item.iso|datum_nl }}{% if item.verlopen %} · verlopen{% endif %}</span>
+  </a>
+  {% else %}
+  <p class="stil">Niets dat binnen twee maanden afloopt.</p>
+  {% endfor %}
+</section>
+
+<section class="kaart">
+  <h2>Opzeggen of stopt vanzelf</h2>
+  {% for item in opzeggen %}
+  <a class="rij-link" href="{{ item.url }}">
+    <span class="naam">{{ item.titel }}</span>
+    <span>{{ item.tekst }}</span>
+  </a>
+  {% else %}
+  <p class="stil">Niets dat je nu hoeft op te zeggen.</p>
+  {% endfor %}
+</section>
+
+<section class="kaart">
+  <h2>Back-up</h2>
+  <p class="stil">Een zip met de database en de bestanden. Het wachtwoord en de sessiesleutel zitten er niet in. Bewaar de zip ergens anders. Na terugzetten vul je het wachtwoord opnieuw in bij de add-on en start je opnieuw.</p>
+  <form method="post" action="{{ url_for('backup') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="knop rust" type="submit">Back-up downloaden</button>
+  </form>
+</section>
+
+<section class="kaart">
+  <h2>Wachtwoord</h2>
+  {% if via_opties %}
+  <p class="stil">Het wachtwoord staat in de add-on. Wijzig het daar en start de add-on opnieuw.</p>
+  {% else %}
+  <form method="post" action="{{ url_for('wachtwoord_wijzigen') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="huidig">Huidig wachtwoord</label>
+    <input id="huidig" name="huidig" type="password" autocomplete="current-password">
+    <div class="twee">
+      <div>
+        <label for="nieuw">Nieuw wachtwoord</label>
+        <input id="nieuw" name="nieuw" type="password" autocomplete="new-password">
+      </div>
+      <div>
+        <label for="nogmaals">Nogmaals</label>
+        <input id="nogmaals" name="nogmaals" type="password" autocomplete="new-password">
+      </div>
+    </div>
+    <p class="acties"><button class="knop" type="submit">Wachtwoord wijzigen</button></p>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

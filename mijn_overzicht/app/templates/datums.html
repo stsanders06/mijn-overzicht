@@ -1,0 +1,24 @@
+{% extends "_layout.html" %}
+{% block titel %}Belangrijke datums{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Belangrijke datums</h1>
+    <p class="lead">Paspoort, ID, rijbewijs, belastingaangifte. Ze komen ook op het dashboard.</p>
+  </div>
+  <a class="knop" href="{{ url_for('datum_nieuw') }}">Nieuwe datum</a>
+</header>
+{% for item in items %}
+<article class="kaart">
+  <a class="rij-link" href="{{ url_for('datum_bewerk', datum_id=item.id) }}">
+    <span class="naam">{{ item.naam }}</span>
+    <span>{{ item.datum|datum_nl }}</span>
+  </a>
+  <p class="stil">{{ item.soort_label }}</p>
+  {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
+  {% include "_chips.html" %}
+</article>
+{% else %}
+<p class="kaart stil">Nog geen datums.</p>
+{% endfor %}
+{% endblock %}
