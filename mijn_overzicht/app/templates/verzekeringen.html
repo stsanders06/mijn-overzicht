@@ -1,0 +1,25 @@
+{% extends "_layout.html" %}
+{% block titel %}Verzekeringen{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Verzekeringen</h1>
+    <p class="lead">Polis, dekking en premie. Een premie die meetelt wordt één vaste last.</p>
+  </div>
+  <a class="knop" href="{{ url_for('verzekering_nieuw') }}">Nieuwe verzekering</a>
+</header>
+{% for item in items %}
+<article class="kaart">
+  <a class="rij-link" href="{{ url_for('verzekering_bewerk', verzekering_id=item.id) }}">
+    <span class="naam">{{ item.titel }}</span>
+    <span class="bedrag">{% if item.premie_cent is not none %}€ {{ item.premie_cent|bedrag }} {{ item.per }}{% endif %}</span>
+  </a>
+  <p class="stil">{% if item.polisnummer %}Polis {{ item.polisnummer }}{% endif %}{% if item.eigen_risico %} · eigen risico {{ item.eigen_risico }}{% endif %}{% if item.looptijd_tot %} · tot {{ item.looptijd_tot|datum_nl }}{% endif %}{% if item.telt_mee %} · telt mee als vaste last{% endif %}</p>
+  {% if item.dekking %}<p class="notitie">{{ item.dekking }}</p>{% endif %}
+  {% if item.tel %}<p><a class="chip" href="{{ item.tel }}">{{ item.hulpnummer }}</a></p>{% elif item.hulpnummer %}<p>{{ item.hulpnummer }}</p>{% endif %}
+  {% include "_chips.html" %}
+</article>
+{% else %}
+<p class="kaart stil">Nog geen verzekeringen.</p>
+{% endfor %}
+{% endblock %}

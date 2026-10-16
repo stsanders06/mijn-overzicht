@@ -1,0 +1,26 @@
+{% extends "_layout.html" %}
+{% block titel %}Zoeken{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Zoeken</h1>
+    {% if q %}<p class="lead">Resultaten voor “{{ q }}”.</p>{% endif %}
+  </div>
+</header>
+{% if te_kort %}
+<p class="kaart stil">Typ minstens twee tekens.</p>
+{% endif %}
+{% for item in resultaten %}
+<article class="kaart">
+  <a class="rij-link" href="{{ item.url }}">
+    <span class="naam">{{ item.titel }}</span>
+    <span>{{ item.soort }}</span>
+  </a>
+  {% if item.tekst %}<p class="stil">{{ item.tekst }}</p>{% endif %}
+</article>
+{% else %}
+{% if q and not te_kort %}
+<p class="kaart stil">Niets gevonden.</p>
+{% endif %}
+{% endfor %}
+{% endblock %}

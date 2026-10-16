@@ -1,0 +1,30 @@
+---
+name: Mijn Overzicht
+version: "0.1.0"
+slug: mijn_overzicht
+description: >-
+  Persoonlijk overzicht van vaste lasten, verzekeringen, voertuigen,
+  bezittingen en documenten. Alleen via de browser, niet in Home Assistant.
+url: https://github.com/stsanders06/mijn-overzicht/tree/main/mijn_overzicht
+arch:
+  - aarch64
+  - amd64
+init: false
+ingress: false
+hassio_api: true
+homeassistant_api: false
+auth_api: false
+host_network: false
+boot: auto
+ports:
+  8320/tcp: 8320
+ports_description:
+  8320/tcp: >-
+    Webinterface. Open http://<ip-van-home-assistant>:8320 in je browser.
+    Er is bewust geen zijbalk in Home Assistant.
+options:
+  wachtwoord: ""
+  log_level: info
+schema:
+  wachtwoord: password?
+  log_level: list(trace|debug|info|notice|warning|error|fatal)

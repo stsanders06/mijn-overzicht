@@ -1,0 +1,37 @@
+{% extends "_layout.html" %}
+{% block titel %}{{ titel }}{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>{{ titel }}</h1>
+  </div>
+  <a class="knop rust" href="{{ url_for('inkomen') }}">Terug</a>
+</header>
+<form class="kaart" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="werkgever">Werkgever</label>
+  <input id="werkgever" name="werkgever" value="{{ waarden.werkgever }}" required>
+  <div class="twee">
+    <div>
+      <label for="uren">Contracturen</label>
+      <input id="uren" name="uren" inputmode="decimal" value="{{ waarden.uren }}">
+    </div>
+    <div>
+      <label for="netto">Netto per maand</label>
+      <input id="netto" name="netto" inputmode="decimal" value="{{ waarden.netto }}">
+    </div>
+  </div>
+  <label for="betaaldag">Betaaldag</label>
+  <input id="betaaldag" name="betaaldag" inputmode="numeric" value="{{ waarden.betaaldag }}">
+  <label for="notitie">Notitie</label>
+  <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
+  <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
+</form>
+{% if koppel_id %}
+<form method="post" action="{{ url_for('inkomen_weg', inkomen_id=koppel_id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="knop gevaar" type="submit" data-bevestig="Deze werkgever weghalen?">Weghalen</button>
+</form>
+{% endif %}
+{% include "_gekoppeld.html" %}
+{% endblock %}

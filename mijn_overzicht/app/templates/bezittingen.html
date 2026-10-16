@@ -1,0 +1,25 @@
+{% extends "_layout.html" %}
+{% block titel %}Bezittingen{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Bezittingen</h1>
+    <p class="lead">Apparaten en gereedschap, met aankoop, winkel, prijs en garantie.</p>
+  </div>
+  <a class="knop" href="{{ url_for('bezit_nieuw') }}">Nieuw bezit</a>
+</header>
+{% for item in items %}
+<article class="kaart">
+  <a class="rij-link" href="{{ url_for('bezit_bewerk', bezit_id=item.id) }}">
+    <span class="naam">{{ item.naam }}</span>
+    <span class="bedrag">{% if item.prijs_cent is not none %}€ {{ item.prijs_cent|bedrag }}{% endif %}</span>
+  </a>
+  <p class="stil">{% if item.winkel %}{{ item.winkel }}{% endif %}{% if item.aankoop %} · {{ item.aankoop|datum_nl }}{% endif %}</p>
+  {% if item.badge %}<p><span class="badge {{ item.badge.soort }}">{{ item.badge.tekst }}</span></p>{% endif %}
+  {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
+  {% include "_chips.html" %}
+</article>
+{% else %}
+<p class="kaart stil">Nog geen bezittingen.</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "_layout.html" %}
+{% block titel %}Contacten{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Contacten</h1>
+    <p class="lead">Huisarts, tandarts, verzekeraar, garage, pas blokkeren.</p>
+  </div>
+  <a class="knop" href="{{ url_for('contact_nieuw') }}">Nieuw contact</a>
+</header>
+{% for item in items %}
+<article class="kaart">
+  <a class="rij-link" href="{{ url_for('contact_bewerk', contact_id=item.id) }}">
+    <span class="naam">{{ item.naam }}</span>
+    <span>{{ item.rol_label }}</span>
+  </a>
+  <p class="chip-rij">
+    {% if item.tel %}<a class="chip" href="{{ item.tel }}">{{ item.telefoon }}</a>{% elif item.telefoon %}<span>{{ item.telefoon }}</span>{% endif %}
+    {% if item.mail %}<a class="chip" href="{{ item.mail }}">{{ item.email }}</a>{% endif %}
+  </p>
+  {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
+  {% include "_chips.html" %}
+</article>
+{% else %}
+<p class="kaart stil">Nog geen contacten.</p>
+{% endfor %}
+{% endblock %}

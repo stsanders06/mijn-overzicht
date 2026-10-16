@@ -1,0 +1,49 @@
+<section class="kaart gekoppeld">
+  <h2>Gekoppeld</h2>
+  {% if koppel_id %}
+    {% if koppelingen %}
+      {% for koppel in koppelingen %}
+      <div class="gekoppeld-item">
+        <a class="chip" href="{{ koppel.url }}"><small>{{ koppel.soort_label }}</small> {{ koppel.titel }}</a>
+        {% if koppel.vast %}
+        <span class="vast-noot">vastgezet via een veld</span>
+        {% else %}
+        <form method="post" action="{{ url_for('koppeling_weg', koppel_id=koppel.koppel_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="van_type" value="{{ koppel_type }}">
+          <input type="hidden" name="van_id" value="{{ koppel_id }}">
+          <button class="chip-weg" type="submit" data-bevestig="Deze koppeling weghalen?">Weg</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="stil">Nog niets gekoppeld.</p>
+    {% endif %}
+    <form method="get">
+      <label for="kies">Koppelen aan</label>
+      <div class="kies-rij">
+        <input id="kies" name="kies" value="{{ kies }}" placeholder="Zoek een naam" autocomplete="off">
+        <button class="knop" type="submit">Zoek</button>
+      </div>
+    </form>
+    {% if kies_te_kort %}
+    <p class="stil">Typ minstens twee tekens.</p>
+    {% endif %}
+    {% for kandidaat in kies_resultaten %}
+    <form method="post" action="{{ url_for('koppelen') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="van_type" value="{{ koppel_type }}">
+      <input type="hidden" name="van_id" value="{{ koppel_id }}">
+      <input type="hidden" name="naar_type" value="{{ kandidaat.soort }}">
+      <input type="hidden" name="naar_id" value="{{ kandidaat.id }}">
+      <button class="chip" type="submit"><small>{{ kandidaat.soort_label }}</small> {{ kandidaat.titel }}</button>
+    </form>
+    {% endfor %}
+    {% if kies and not kies_te_kort and not kies_resultaten %}
+    <p class="stil">Niets gevonden.</p>
+    {% endif %}
+  {% else %}
+  <p class="stil">Sla eerst op. Daarna kun je dit koppelen aan een ander item.</p>
+  {% endif %}
+</section>

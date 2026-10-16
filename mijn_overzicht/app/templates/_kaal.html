@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block titel %}Mijn Overzicht{% endblock %}</title>
+<link rel="icon" href="{{ url_for('favicon') }}">
+<style>
+@font-face {
+  font-family: "Atelier Serif";
+  src: url("{{ url_for('static', filename='fonts/atelier-serif.woff2') }}") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atelier Sans";
+  src: url("{{ url_for('static', filename='fonts/atelier-sans.woff2') }}") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atelier Sans";
+  src: url("{{ url_for('static', filename='fonts/atelier-sans-semibold.woff2') }}") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background:
+    radial-gradient(800px 300px at 50% -10%, rgba(184, 97, 46, 0.16), transparent 55%),
+    #172028;
+  color: #1c2430;
+  font-family: "Atelier Sans", "Source Sans 3", sans-serif;
+  font-size: 16.5px;
+}
+.paneel {
+  width: min(420px, 100%);
+  background: #fffdf8;
+  border-radius: 22px;
+  padding: 28px 22px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+h1 {
+  font-family: "Atelier Serif", "Liberation Serif", serif;
+  font-size: 2rem;
+  margin: 8px 0;
+  letter-spacing: -0.03em;
+}
+.streep { width: 42px; height: 4px; border-radius: 4px; background: #b8612e; }
+p { color: #5e675f; }
+label { display: block; margin: 14px 0 4px; color: #5e675f; }
+input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #e3d9c8;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font: inherit;
+}
+.vink { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.vink input { width: 22px; min-height: 22px; }
+button {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 12px;
+  background: #0f5c50;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast { background: #8d2e2e; color: #fff; border-radius: 12px; padding: 10px 12px; }
+.wacht { color: #8d2e2e; }
+</style>
+</head>
+<body>
+<main class="paneel">
+  <div class="streep"></div>
+  {% with berichten = get_flashed_messages(with_categories=true) %}
+  {% if berichten %}
+    {% for soort, ruw in berichten %}
+    {% set bericht = ruw|uit_json %}
+    <p class="toast" role="status">{{ bericht.tekst }}</p>
+    {% endfor %}
+  {% endif %}
+  {% endwith %}
+  {% block inhoud %}{% endblock %}
+</main>
+</body>
+</html>

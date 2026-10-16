@@ -1,0 +1,3 @@
+Atelier Serif is Noto Serif Display, Atelier Sans is Inter.
+Both are licensed under the SIL Open Font License 1.1.
+https://scripts.sil.org/OFL

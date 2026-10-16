@@ -1,0 +1,33 @@
+{% extends "_layout.html" %}
+{% block titel %}{{ titel }}{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>{{ titel }}</h1>
+  </div>
+  <a class="knop rust" href="{{ url_for('documenten') }}">Terug</a>
+</header>
+<form class="kaart" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="titel">Titel</label>
+  <input id="titel" name="titel" value="{{ waarden.titel }}" required>
+  <label for="link">Link</label>
+  <input id="link" name="link" type="url" value="{{ waarden.link }}" placeholder="https://">
+  <label for="verval">Vervaldatum</label>
+  <input id="verval" name="verval" type="date" value="{{ waarden.verval }}">
+  <label for="notitie">Notitie</label>
+  <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
+  <label for="bestanden">Bestanden</label>
+  <input id="bestanden" name="bestanden" type="file" accept="image/*,.heic,.heif,application/pdf,.pdf" multiple>
+  <p class="bestandsnamen stil"></p>
+  <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
+  {% include "_bestanden.html" %}
+</form>
+{% if koppel_id %}
+<form method="post" action="{{ url_for('document_weg', document_id=koppel_id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="knop gevaar" type="submit" data-bevestig="Dit document weghalen?">Weghalen</button>
+</form>
+{% endif %}
+{% include "_gekoppeld.html" %}
+{% endblock %}

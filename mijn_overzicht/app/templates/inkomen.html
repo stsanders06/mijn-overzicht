@@ -1,0 +1,24 @@
+{% extends "_layout.html" %}
+{% block titel %}Inkomen &amp; werk{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>Inkomen &amp; werk</h1>
+    <p class="lead">{% if netto is not none %}Netto samen € {{ netto|bedrag }} per maand.{% else %}Netto vul je zelf in, het blijft leeg tot je het zet.{% endif %}{% if uren %} {{ uren }} contracturen.{% endif %}</p>
+  </div>
+  <a class="knop" href="{{ url_for('inkomen_nieuw') }}">Nieuwe werkgever</a>
+</header>
+{% for item in items %}
+<article class="kaart">
+  <a class="rij-link" href="{{ url_for('inkomen_bewerk', inkomen_id=item.id) }}">
+    <span class="naam">{{ item.werkgever }}</span>
+    <span class="bedrag">{% if item.netto_cent is not none %}€ {{ item.netto_cent|bedrag }}{% endif %}</span>
+  </a>
+  <p class="stil">{% if item.uren is not none %}{{ item.uren }} uur{% endif %}{% if item.betaaldag %} · betaaldag {{ item.betaaldag }}{% endif %}</p>
+  {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
+  {% include "_chips.html" %}
+</article>
+{% else %}
+<p class="kaart stil">Nog geen werkgever.</p>
+{% endfor %}
+{% endblock %}

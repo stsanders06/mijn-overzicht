@@ -1,0 +1,28 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# Start Mijn Overzicht
+# ==============================================================================
+# Buiten Home Assistant (tests, lokaal) is er geen Supervisor. Dan blijven de
+# standaardwaarden staan en leest de app /data/options.json zelf uit.
+if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+    log_level="$(bashio::config 'log_level' 'info')"
+    addon_version="$(bashio::addon.version 2>/dev/null || true)"
+else
+    log_level="info"
+    addon_version=""
+fi
+
+export LOG_LEVEL="${log_level}"
+export ADDON_VERSION="${addon_version}"
+export DATA_DIR="/data"
+export PORT="8320"
+
+# De containerklok is vaak UTC. Zonder TZ is het tussen middernacht en 02:00
+# in Nederland nog gisteren, en kloppen vervaldatums en garantie niet.
+if [ -z "${TZ:-}" ]; then
+    export TZ="Europe/Amsterdam"
+fi
+
+bashio::log.info "Mijn Overzicht wordt gestart op poort ${PORT}..."
+
+exec python3 /opt/app/main.py

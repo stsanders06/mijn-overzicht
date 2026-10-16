@@ -1,0 +1,31 @@
+---
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Pytest en WebKit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pakketten installeren
+        run: |
+          pip install -r mijn_overzicht/app/requirements.txt
+          pip install -r mijn_overzicht/tests/requirements.txt
+          python -m playwright install --with-deps webkit
+
+      - name: Pytest
+        run: python -m pytest

@@ -1,0 +1,19 @@
+{% extends "_kaal.html" %}
+{% block titel %}Inloggen · Mijn Overzicht{% endblock %}
+{% block inhoud %}
+<h1>Mijn Overzicht</h1>
+<p>Alleen voor jou, op dit netwerk.</p>
+{% if wacht %}
+<p class="wacht">Te veel pogingen. Wacht {{ wacht }} minuten.</p>
+{% endif %}
+<form method="post" action="{{ url_for('inloggen') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="verder" value="{{ verder }}">
+  <label for="gebruikersnaam">Account</label>
+  <input id="gebruikersnaam" name="gebruikersnaam" value="mijn-overzicht" autocomplete="username" readonly>
+  <label for="wachtwoord">Wachtwoord</label>
+  <input id="wachtwoord" name="wachtwoord" type="password" autocomplete="current-password" required>
+  <label class="vink"><input type="checkbox" name="onthoud" value="ja" checked> Onthoud mij op dit apparaat</label>
+  <button type="submit">Inloggen</button>
+</form>
+{% endblock %}

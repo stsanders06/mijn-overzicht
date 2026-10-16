@@ -1,0 +1,71 @@
+{% extends "_layout.html" %}
+{% block titel %}{{ titel }}{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>{{ titel }}</h1>
+    {% if gekoppeld %}<p class="lead">Naam, bedrag en frequentie komen van de verzekering. De premie telt één keer mee.</p>{% endif %}
+  </div>
+  <a class="knop rust" href="{{ url_for('lasten') }}">Terug</a>
+</header>
+<form class="kaart" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="naam">Naam</label>
+  <input id="naam" name="naam" value="{{ waarden.naam }}"{% if gekoppeld %} readonly{% else %} required{% endif %}>
+  <div class="twee">
+    <div>
+      <label for="categorie">Categorie</label>
+      <select id="categorie" name="categorie"{% if gekoppeld %} disabled{% endif %}>
+        {% for naam in LAST_CATEGORIEEN %}
+        <option value="{{ naam }}"{% if waarden.categorie == naam %} selected{% endif %}>{{ naam }}</option>
+        {% endfor %}
+      </select>
+      {% if gekoppeld %}<input type="hidden" name="categorie" value="{{ waarden.categorie }}">{% endif %}
+    </div>
+    <div>
+      <label for="frequentie">Frequentie</label>
+      <select id="frequentie" name="frequentie"{% if gekoppeld %} disabled{% endif %}>
+        {% for code, label in FREQUENTIES %}
+        <option value="{{ code }}"{% if waarden.frequentie == code %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      {% if gekoppeld %}<input type="hidden" name="frequentie" value="{{ waarden.frequentie }}">{% endif %}
+    </div>
+  </div>
+  <div class="twee">
+    <div>
+      <label for="bedrag">Bedrag</label>
+      <input id="bedrag" name="bedrag" inputmode="decimal" value="{{ waarden.bedrag }}"{% if gekoppeld %} readonly{% endif %}>
+    </div>
+    <div>
+      <label for="afschrijfdag">Afschrijfdag</label>
+      <input id="afschrijfdag" name="afschrijfdag" inputmode="numeric" value="{{ waarden.afschrijfdag }}">
+    </div>
+  </div>
+  <label for="rekening">Betaald vanaf</label>
+  <input id="rekening" name="rekening" value="{{ waarden.rekening }}" placeholder="ING betaal">
+  <div class="twee">
+    <div>
+      <label for="contract_eind">Contract einddatum</label>
+      <input id="contract_eind" name="contract_eind" type="date" value="{{ waarden.contract_eind }}">
+    </div>
+    <div>
+      <label for="opzegtermijn_dagen">Opzegtermijn in dagen</label>
+      <input id="opzegtermijn_dagen" name="opzegtermijn_dagen" inputmode="numeric" value="{{ waarden.opzegtermijn_dagen }}">
+    </div>
+  </div>
+  <label class="vink"><input type="checkbox" name="automatisch" value="ja"{% if waarden.automatisch %} checked{% endif %}> Verlengt automatisch</label>
+  <label for="link">Link</label>
+  <input id="link" name="link" type="url" value="{{ waarden.link }}" placeholder="https://">
+  <label for="notitie">Notitie</label>
+  <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
+  <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
+</form>
+{% if koppel_id %}
+<form method="post" action="{{ url_for('last_weg', last_id=koppel_id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="knop gevaar" type="submit" data-bevestig="{% if gekoppeld %}Deze premie niet meer meetellen bij vaste lasten? De verzekering zelf blijft staan.{% else %}Deze vaste last weghalen?{% endif %}">Weghalen</button>
+</form>
+{% endif %}
+{% include "_gekoppeld.html" %}
+{% endblock %}

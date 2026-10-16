@@ -1,0 +1,87 @@
+{% extends "_layout.html" %}
+{% block titel %}{{ titel }}{% endblock %}
+{% block inhoud %}
+<header class="kop">
+  <div>
+    <h1>{{ titel }}</h1>
+    <p class="lead">Koppel hierna een contact voor het alarmnummer of de maatschappij, en de polis als document.</p>
+  </div>
+  <a class="knop rust" href="{{ url_for('verzekeringen') }}">Terug</a>
+</header>
+<form class="kaart" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="twee">
+    <div>
+      <label for="soort">Soort</label>
+      <select id="soort" name="soort" required>
+        <option value="">Kies</option>
+        {% for code, label in VERZEKERING_SOORTEN %}
+        <option value="{{ code }}"{% if waarden.soort == code %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="maatschappij">Maatschappij</label>
+      <input id="maatschappij" name="maatschappij" value="{{ waarden.maatschappij }}" required>
+    </div>
+  </div>
+  <div class="twee">
+    <div>
+      <label for="plan">Plan / pakket</label>
+      <input id="plan" name="plan" value="{{ waarden.plan }}">
+    </div>
+    <div>
+      <label for="polisnummer">Polisnummer</label>
+      <input id="polisnummer" name="polisnummer" value="{{ waarden.polisnummer }}">
+    </div>
+  </div>
+  <label for="eigen_risico">Eigen risico</label>
+  <input id="eigen_risico" name="eigen_risico" value="{{ waarden.eigen_risico }}">
+  <label for="dekking">Dekking</label>
+  <textarea id="dekking" name="dekking">{{ waarden.dekking }}</textarea>
+  <div class="twee">
+    <div>
+      <label for="premie">Premie</label>
+      <input id="premie" name="premie" inputmode="decimal" value="{{ waarden.premie }}">
+    </div>
+    <div>
+      <label for="frequentie">Frequentie</label>
+      <select id="frequentie" name="frequentie">
+        {% for code, label in FREQUENTIES %}
+        <option value="{{ code }}"{% if waarden.frequentie == code %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <label class="vink"><input type="checkbox" name="telt_mee" value="ja"{% if waarden.telt_mee %} checked{% endif %}> Premie meetellen als vaste last (één keer)</label>
+  <label for="hulpnummer">Hulp- of alarmnummer</label>
+  <input id="hulpnummer" name="hulpnummer" value="{{ waarden.hulpnummer }}">
+  <div class="twee">
+    <div>
+      <label for="looptijd_van">Looptijd van</label>
+      <input id="looptijd_van" name="looptijd_van" type="date" value="{{ waarden.looptijd_van }}">
+    </div>
+    <div>
+      <label for="looptijd_tot">Looptijd tot</label>
+      <input id="looptijd_tot" name="looptijd_tot" type="date" value="{{ waarden.looptijd_tot }}">
+    </div>
+  </div>
+  <label for="notitie">Notitie</label>
+  <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
+  <label for="polis">Polis (foto of PDF)</label>
+  <input id="polis" name="polis" type="file" accept="image/*,.heic,.heif,application/pdf,.pdf">
+  <p class="bestandsnamen stil"></p>
+  <label for="bestanden">Andere bestanden</label>
+  <input id="bestanden" name="bestanden" type="file" accept="image/*,.heic,.heif,application/pdf,.pdf" multiple>
+  <p class="bestandsnamen stil"></p>
+  <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
+  {% include "_bestanden.html" %}
+</form>
+{% if koppel_id %}
+<form method="post" action="{{ url_for('verzekering_weg', verzekering_id=koppel_id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="knop gevaar" type="submit" data-bevestig="Deze verzekering weghalen?">Weghalen</button>
+</form>
+{% endif %}
+{% include "_gekoppeld.html" %}
+{% endblock %}

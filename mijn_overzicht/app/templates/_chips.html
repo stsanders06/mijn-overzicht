@@ -1,0 +1,7 @@
+{% if item.koppelingen %}
+<p class="chip-rij">
+  {% for koppel in item.koppelingen %}
+  <a class="chip" href="{{ koppel.url }}"><small>{{ koppel.soort_label }}</small> {{ koppel.titel }}</a>
+  {% endfor %}
+</p>
+{% endif %}

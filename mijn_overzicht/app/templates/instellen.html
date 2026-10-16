@@ -1,0 +1,14 @@
+{% extends "_kaal.html" %}
+{% block titel %}Wachtwoord kiezen · Mijn Overzicht{% endblock %}
+{% block inhoud %}
+<h1>Kies een wachtwoord</h1>
+<p>Minstens {{ minimum }} tekens. Daarna opent het overzicht leeg.</p>
+<form method="post" action="{{ url_for('account_instellen') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="wachtwoord">Wachtwoord</label>
+  <input id="wachtwoord" name="wachtwoord" type="password" autocomplete="new-password" required>
+  <label for="nogmaals">Nogmaals</label>
+  <input id="nogmaals" name="nogmaals" type="password" autocomplete="new-password" required>
+  <button type="submit">Opslaan en openen</button>
+</form>
+{% endblock %}
