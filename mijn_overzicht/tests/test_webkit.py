@@ -153,6 +153,75 @@ def test_webkit_breedtes_menu_en_tikvlakken(app):
         server.shutdown()
 
 
+def _verwacht_inkomen_soort(page, toeslag):
+    assert page.is_visible("#soort")
+    assert page.is_visible("#betaaldag")
+    if toeslag:
+        assert page.is_visible("#toeslag-veld")
+        assert page.is_visible("#toeslag")
+        assert page.is_visible("#toeslag-hint")
+        assert "Bij een toeslag mag de naam leeg blijven" in page.inner_text("#toeslag-hint")
+        assert page.is_hidden("#uren-veld")
+        assert page.is_hidden("#uren")
+    else:
+        assert page.is_hidden("#toeslag-veld")
+        assert page.is_hidden("#toeslag")
+        assert page.is_hidden("#toeslag-hint")
+        assert page.is_visible("#uren-veld")
+        assert page.is_visible("#uren")
+
+
+def test_webkit_inkomen_soort_toont_passende_velden(app, post):
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    loon = post("/inkomen/nieuw", data={
+        "soort": "loon", "werkgever": "Bakkerij", "uren": "32", "netto": "2400", "frequentie": "maand",
+    })
+    toeslag = post("/inkomen/nieuw", data={
+        "soort": "toeslag", "toeslag": "zorgtoeslag", "uren": "12", "netto": "123", "frequentie": "maand",
+    })
+    assert loon.status_code == 302
+    assert toeslag.status_code == 302
+    conn = overzicht.verbind()
+    rijen = conn.execute("SELECT id, soort, uren FROM inkomens ORDER BY id").fetchall()
+    conn.close()
+    assert [(rij["soort"], rij["uren"]) for rij in rijen] == [("loon", 32), ("toeslag", None)]
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    basis = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with playwright_sync.sync_playwright() as pw:
+            browser = pw.webkit.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.set_default_timeout(8000)
+            page.goto(basis + "/inloggen")
+            page.fill("#wachtwoord", TEST_WACHTWOORD)
+            page.click("button[type=submit]")
+            page.wait_for_selector("h1")
+            page.goto(basis + "/inkomen/nieuw")
+            page.wait_for_selector("#soort")
+            _verwacht_inkomen_soort(page, False)
+            page.select_option("#soort", "toeslag")
+            _verwacht_inkomen_soort(page, True)
+            page.select_option("#soort", "loon")
+            _verwacht_inkomen_soort(page, False)
+            page.goto(basis + f"/inkomen/{rijen[0]['id']}")
+            page.wait_for_selector("#soort")
+            assert page.input_value("#soort") == "loon"
+            _verwacht_inkomen_soort(page, False)
+            page.select_option("#soort", "toeslag")
+            _verwacht_inkomen_soort(page, True)
+            page.goto(basis + f"/inkomen/{rijen[1]['id']}")
+            page.wait_for_selector("#soort")
+            assert page.input_value("#soort") == "toeslag"
+            _verwacht_inkomen_soort(page, True)
+            page.select_option("#soort", "loon")
+            _verwacht_inkomen_soort(page, False)
+            browser.close()
+    finally:
+        server.shutdown()
+
+
 def test_webkit_meer_sluit_op_aanraking(app):
     playwright_sync = pytest.importorskip("playwright.sync_api")
     server = make_server("127.0.0.1", 0, app, threaded=True)

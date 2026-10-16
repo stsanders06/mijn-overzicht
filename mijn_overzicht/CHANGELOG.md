@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- Bij inkomen (nieuw en bewerken) zie je Toeslag en de hint alleen als Soort Toeslag is. Contracturen horen bij loon en verdwijnen bij een toeslag; een toeslag bewaart ze niet. Zonder JavaScript blijven die velden zichtbaar.
+
 ## 0.1.6
 
 - Op een iPhone stond de onderste balk achter de zwevende Safari-balk. De pagina scrolde in een kolom van 100dvh, en die hoogte legt de balk te laag. Het document scrolt nu zelf. De balk staat vast onderaan, met ruimte voor de thuisindicator, en de labels blijven daarboven helemaal zichtbaar. De inhoud schuift eronderdoor.

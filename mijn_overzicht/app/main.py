@@ -36,7 +36,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 # Hoort gelijk te lopen met version in config.yaml. In Home Assistant wint het
 # versienummer dat de Supervisor heeft geïnstalleerd; anders deze fallback.
-VERSIE_FALLBACK = "0.1.6"
+VERSIE_FALLBACK = "0.1.7"
 VERSIE = os.environ.get("ADDON_VERSION") or VERSIE_FALLBACK
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -2805,6 +2805,8 @@ def lees_inkomen():
     werkgever = tekst(ruw["werkgever"], 160)
     if soort == "toeslag" and not werkgever:
         werkgever = bijschrift(TOESLAGEN, toeslag) or "Toeslag"
+    if soort == "toeslag":
+        ruw["uren"] = ""
     if not werkgever:
         fouten.append("Vul een naam in.")
     gegevens = {
