@@ -45,3 +45,19 @@ if (frequentie_veld) {
   frequentie_veld.addEventListener("change", toon_ritme);
   toon_ritme();
 }
+function toon_soort() {
+  var soort = document.getElementById("soort");
+  var toeslag = document.getElementById("toeslag-veld");
+  var hint = document.getElementById("toeslag-hint");
+  var uren = document.getElementById("uren-veld");
+  if (!soort || !toeslag || !hint || !uren) return;
+  var is_toeslag = soort.value === "toeslag";
+  toeslag.hidden = !is_toeslag;
+  hint.hidden = !is_toeslag;
+  uren.hidden = is_toeslag;
+}
+var soort_veld = document.getElementById("soort");
+if (soort_veld) {
+  soort_veld.addEventListener("change", toon_soort);
+  toon_soort();
+}

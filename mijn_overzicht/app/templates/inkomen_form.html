@@ -18,7 +18,7 @@
         {% endfor %}
       </select>
     </div>
-    <div>
+    <div class="ritme" id="toeslag-veld">
       <label for="toeslag">Toeslag</label>
       <select id="toeslag" name="toeslag">
         <option value="">—</option>
@@ -28,7 +28,7 @@
       </select>
     </div>
   </div>
-  <p class="stil">Bij een toeslag mag de naam leeg blijven. Dan gebruikt de app de gekozen toeslag.</p>
+  <p class="stil ritme" id="toeslag-hint">Bij een toeslag mag de naam leeg blijven. Dan gebruikt de app de gekozen toeslag.</p>
   <label for="werkgever">Naam</label>
   <input id="werkgever" name="werkgever" value="{{ waarden.werkgever }}">
   <div class="twee">
@@ -46,7 +46,7 @@
     </div>
   </div>
   <div class="twee">
-    <div>
+    <div class="ritme" id="uren-veld">
       <label for="uren">Contracturen</label>
       <input id="uren" name="uren" inputmode="decimal" value="{{ waarden.uren }}">
     </div>

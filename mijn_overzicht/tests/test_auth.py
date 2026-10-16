@@ -199,6 +199,9 @@ def test_elk_formulier_met_verplicht_veld_heeft_novalidate():
 def test_leeg_inkomen_geeft_nederlandse_fout(client):
     pagina = client.get("/inkomen/nieuw").get_data(as_text=True)
     assert '<form class="kaart" method="post" novalidate>' in pagina
+    for veld in ("toeslag-veld", "toeslag-hint", "uren-veld"):
+        opening = pagina.split(f'id="{veld}"', 1)[1].split(">", 1)[0]
+        assert "hidden" not in opening, veld
     antwoord = client.post(
         "/inkomen/nieuw",
         data={"csrf_token": "test-token", "soort": "loon", "werkgever": "", "frequentie": "maand"},
