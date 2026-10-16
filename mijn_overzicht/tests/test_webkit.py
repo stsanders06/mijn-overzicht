@@ -103,10 +103,10 @@ def test_webkit_breedtes_menu_en_tikvlakken(app):
                     if pad == "/lasten/nieuw":
                         voor = page.eval_on_selector("form.kaart", "el => el.getBoundingClientRect().height")
                         page.select_option("#frequentie", "vier_weken")
-                        assert page.is_visible("#afschrijfdag")
+                        assert page.is_hidden("#afschrijfdag")
                         assert page.is_visible("#referentie")
                         na = page.eval_on_selector("form.kaart", "el => el.getBoundingClientRect().height")
-                        assert abs(na - voor) <= 24, (breedte, voor, na)
+                        assert abs(na - voor) <= 48, (breedte, voor, na)
                         maten = page.evaluate(
                             "() => ({w: document.documentElement.scrollWidth, c: document.documentElement.clientWidth})"
                         )
@@ -114,12 +114,14 @@ def test_webkit_breedtes_menu_en_tikvlakken(app):
                         slecht = _tikvlakken(page)
                         assert not slecht, (pad, breedte, slecht)
                         page.select_option("#frequentie", "week")
+                        assert page.is_hidden("#afschrijfdag")
                         assert page.is_visible("#referentie")
                         page.select_option("#frequentie", "twee_weken")
+                        assert page.is_hidden("#afschrijfdag")
                         assert page.is_visible("#referentie")
                         page.select_option("#frequentie", "maand")
                         assert page.is_visible("#afschrijfdag")
-                        assert page.is_visible("#referentie")
+                        assert page.is_hidden("#referentie")
                 if breedte < 800:
                     page.goto(basis + "/")
                     _wacht_menu_dicht(page)

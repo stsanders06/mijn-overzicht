@@ -316,7 +316,7 @@ textarea { min-height: 110px; resize: vertical; }
 }
 .badge.bijna { background: var(--koper-zacht); color: #8a4b16; }
 .badge.verlopen { background: #f8e4e4; color: var(--gevaar); }
-.groep-kop { margin: var(--ruimte-5) 0 var(--ruimte-2); color: var(--mist); font-size: 0.85rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.groep-kop { margin: var(--ruimte-5) 0 var(--ruimte-3); color: var(--mist); font-size: 0.85rem; letter-spacing: 0.06em; text-transform: uppercase; }
 .kop + .groep-kop { margin-top: var(--ruimte-1); }
 .toasts { display: flex; flex-direction: column; gap: var(--ruimte-2); margin-bottom: var(--ruimte-3); }
 .toast {

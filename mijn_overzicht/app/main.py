@@ -32,12 +32,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, Response, abort, flash, redirect, render_template, request, send_file, session, url_for
 from jinja2 import StrictUndefined
-from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 # Hoort gelijk te lopen met version in config.yaml. In Home Assistant wint het
 # versienummer dat de Supervisor heeft geïnstalleerd; anders deze fallback.
-VERSIE_FALLBACK = "0.1.3"
+VERSIE_FALLBACK = "0.1.4"
 VERSIE = os.environ.get("ADDON_VERSION") or VERSIE_FALLBACK
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -59,13 +58,16 @@ WACHTWOORD_MINIMUM = 8
 # Vertraging begint pas na een paar mislukte pogingen en loopt exponentieel op.
 # Per adres blokkeert die pauze ook een juist wachtwoord, en elke foute poging
 # telt mee. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit,
-# werkt meteen. Een vol venster vertraagt alleen de hash, het sluit niemand uit.
+# wordt meteen gecontroleerd: er wordt niet geslapen en er is geen wachtrij.
+# Een vol venster slaat extra hashes over. Hooguit een paar hashes tegelijk.
 PAUZE_NA_POGINGEN = 3
 IP_PLAFOND = 60
 POGINGEN_IP_MAX = 256
 VENSTER_SECONDEN = 30
 VENSTER_MAX = 8
-VENSTER_STAP = 1.0
+# Gedeelde hashes. Waitress heeft in ssl-modus 8 threads; de rest blijft vrij
+# voor de rest van de site. Een vol slot antwoordt meteen, zonder te wachten.
+HASH_PARALLEL = 2
 # Een dag. Langer vastzetten op http-naar-https is lastig terug te draaien.
 HSTS_SECONDEN = 86400
 # Waitress blijft http, alleen op localhost. Nginx doet de TLS op de echte poort.
@@ -120,9 +122,8 @@ TOESLAGEN = [
     ("anders", "Anders"),
 ]
 # Zelfde argumenten als start_server in ssl-modus. De integratietest gebruikt dit
-# zodat een wijziging hier ook de echte waitress raakt. ProxyFix doet dit niet
-# nog een keer: waitress zet REMOTE_ADDR al op het clientadres, en ProxyFix
-# werkt alleen als dat adres nog localhost is.
+# zodat een wijziging hier ook de echte waitress raakt. De app leest
+# X-Forwarded-For niet zelf: waitress zet REMOTE_ADDR al op het clientadres.
 WAITRESS_HTTPS = {
     "threads": 8,
     "url_scheme": "https",
@@ -309,28 +310,11 @@ DUMMY_HASH = generate_password_hash("niet-het-wachtwoord")
 POGINGEN_IP = {}
 MISLUKKINGEN = []
 _venster_lock = threading.Lock()
-_hash_lock = threading.Lock()
+# Nooit blokkerend pakken, en nooit slapen terwijl een slot vastligt.
+_hash_slots = threading.BoundedSemaphore(HASH_PARALLEL)
+_gereserveerd = threading.BoundedSemaphore(1)
+_herkansing = threading.BoundedSemaphore(1)
 HTTPS_ACTIEF = False
-
-
-class VertrouwProxyAlleenLokaal:
-    """X-Forwarded-For telt alleen in ssl-modus, en alleen vanaf localhost.
-
-    Nginx overschrijft die kop met het echte adres. Op gewoon http blijft het
-    TCP-adres gelden, ook als een bezoeker de kop zelf meestuurt.
-    """
-
-    def __init__(self, toepassing):
-        self.toepassing = toepassing
-        self.binnen = ProxyFix(toepassing, x_for=1)
-
-    def __call__(self, environ, start_response):
-        if HTTPS_ACTIEF and environ.get("REMOTE_ADDR") in {"127.0.0.1", "::1"}:
-            return self.binnen(environ, start_response)
-        return self.toepassing(environ, start_response)
-
-
-app.wsgi_app = VertrouwProxyAlleenLokaal(app.wsgi_app)
 
 
 def verbind():
@@ -881,21 +865,6 @@ def _venster_bijwerken(nu_):
     MISLUKKINGEN[:] = [tijdstip for tijdstip in MISLUKKINGEN if _normaal_moment(tijdstip) >= grens]
 
 
-def globale_vertraging(nu_=None):
-    """Korte vertraging als er al te veel foute hashes in het venster zitten.
-
-    Een juist wachtwoord gaat daarna alsnog door. Het formulier toont deze
-    wachttijd niet, zodat een ander adres niet 'geblokkeerd' lijkt.
-    """
-    nu_ = nu() if nu_ is None else nu_
-    with _venster_lock:
-        _venster_bijwerken(nu_)
-        extra = len(MISLUKKINGEN) - VENSTER_MAX + 1
-        if extra <= 0:
-            return 0
-        return min(VENSTER_STAP * extra, 2.0)
-
-
 def globale_aantal():
     with _venster_lock:
         _venster_bijwerken(nu())
@@ -954,13 +923,39 @@ def wis_mislukkingen():
     POGINGEN_IP.pop(_afzender(), None)
 
 
-def controleer_wachtwoord(hash_, wachtwoord):
-    vertraging = globale_vertraging()
-    if vertraging:
-        with _hash_lock:
-            time.sleep(vertraging)
-            return hash_klopt(hash_, wachtwoord)
-    return hash_klopt(hash_, wachtwoord)
+def _ip_faalde_in_venster():
+    """Dit adres heeft in het huidige venster al een fout wachtwoord gegeven."""
+    aantal, laatste = POGINGEN_IP.get(_afzender(), (0, None))
+    if not laatste or aantal < 1:
+        return False
+    grens = _normaal_moment(nu()) - timedelta(seconds=VENSTER_SECONDEN)
+    return _normaal_moment(laatste) >= grens
+
+
+def _pak_hash_slot():
+    """Een vrij slot, of None. Wacht nooit en slaapt nooit.
+
+    Zit het venster vol, dan draait een adres dat al gefaald heeft niet op
+    het gereserveerde slot. Dat slot blijft vrij voor een adres dat zelf nog
+    niet gefaald heeft, zodat een juist wachtwoord niet achter de aanval wacht.
+    Een adres dat al gefaald heeft maar nog niet in zijn pauze zit, krijgt
+    hooguit het herkansingsslot. Is dat bezet, dan meteen 'later', zonder hash.
+    """
+    vol = globale_aantal() >= VENSTER_MAX
+    if vol and _ip_faalde_in_venster():
+        if _herkansing.acquire(blocking=False):
+            return _herkansing
+        return None
+    if not vol and _hash_slots.acquire(blocking=False):
+        return _hash_slots
+    if _gereserveerd.acquire(blocking=False):
+        return _gereserveerd
+    return None
+
+
+def _later():
+    """Kort antwoord. Geen sjabloon en geen database, zodat de wachtrij leegloopt."""
+    return Response("Probeer het later opnieuw.\n", status=429, mimetype="text/plain; charset=utf-8")
 
 
 def start_sessie(onthoud):
@@ -988,6 +983,15 @@ def account_instellen():
         code = request.form.get("code", "")
         wachtwoord = request.form.get("wachtwoord", "")
         nogmaals = request.form.get("nogmaals", "")
+        if not isinstance(code, str) or not code.strip():
+            melding("Vul de instelcode in.", "fout")
+            return redirect(url_for("account_instellen"))
+        if not isinstance(wachtwoord, str) or not wachtwoord:
+            melding("Vul een wachtwoord in.", "fout")
+            return redirect(url_for("account_instellen"))
+        if not isinstance(nogmaals, str) or not nogmaals:
+            melding("Vul het wachtwoord nog een keer in.", "fout")
+            return redirect(url_for("account_instellen"))
         if not setup_code_klopt(code):
             noteer_mislukking()
             melding("De instelcode klopt niet. Hij staat eenmalig in het log van de add-on.", "fout")
@@ -1028,11 +1032,22 @@ def inloggen():
         if ip_wachttijd():
             return redirect(url_for("inloggen"))
         wachtwoord = request.form.get("wachtwoord", "")
-        conn = verbind()
-        rij = conn.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()
-        conn.close()
-        hash_ = rij["wachtwoord"] if rij else ""
-        if rij is not None and controleer_wachtwoord(hash_, wachtwoord):
+        if not isinstance(wachtwoord, str) or not wachtwoord:
+            melding("Vul je wachtwoord in.", "fout")
+            return redirect(url_for("inloggen", verder=verder))
+        # Slot eerst. Lukt dat niet, dan meteen 429: geen hash, geen database, geen sjabloon.
+        slot = _pak_hash_slot()
+        if slot is None:
+            return _later()
+        try:
+            conn = verbind()
+            rij = conn.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()
+            conn.close()
+            hash_ = rij["wachtwoord"] if rij else ""
+            klopt = rij is not None and hash_klopt(hash_, wachtwoord)
+        finally:
+            slot.release()
+        if klopt:
             wis_mislukkingen()
             start_sessie(request.form.get("onthoud") == "ja")
             return redirect(veilig_pad(verder) or url_for("index"))
@@ -3620,8 +3635,12 @@ def start_nginx(poort, intern, cert, sleutel):
         log.error("nginx kan niet starten: %s", (test.stderr or test.stdout or "").strip())
         _ruim_nginx_bestanden(pid)
         sys.exit(1)
+    # Eigen proces, geen preexec_fn: dat deadlockt zodra de app threads heeft.
+    # Het hulpprogramma zet PR_SET_PDEATHSIG en start daarna nginx. SIGKILL van
+    # Python stuurt nginx dan SIGTERM, ook al zit nginx in een eigen sessie.
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sterf_met_ouder.py")
     proc = subprocess.Popen(
-        ["nginx", "-c", config_pad, "-g", "daemon off;"],
+        [sys.executable, helper, "nginx", "-c", config_pad, "-g", "daemon off;"],
         user=gebruiker.pw_uid,
         group=gebruiker.pw_gid,
         stderr=subprocess.PIPE,

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4
+
+- De vertraging tot 2 seconden uit 0.1.3 sliep terwijl een slot vastlag. Daardoor stonden alle bezoekers achter elkaar en kon de site na een golf foute pogingen onbereikbaar blijven. Die slaap is weg. Zitten er in 30 seconden al 8 foute controles, dan krijgt een extra foute poging meteen “Probeer het later opnieuw.” (429), zonder hash. Een juist wachtwoord vanaf een adres dat in dat venster nog niet gefaald heeft, wordt meteen gecontroleerd op een eigen slot en wacht niet achter de aanval. Er lopen hooguit een paar hashes tegelijk; is dat vol, dan ook meteen 429.
+- Stopt Python met SIGKILL, dan stopt nginx mee. Een klein hulpprogramma zet daarvoor het overlijdenssignaal, zonder preexec in het proces van de app.
+- De app leest `X-Forwarded-For` niet meer zelf. In ssl-modus doet waitress dat, alleen vanaf localhost.
+- Tussen een categoriekop en de kaart eronder zit 12 pixels, ook bij Vaste lasten en Inkomen.
+- Verplichte velden geven een Nederlandse fout van de server. De browser toont geen Engelse melding meer.
+- Afschrijfdag en Vanaf blijven allebei zichtbaar zonder JavaScript. Met JavaScript zie je alleen het veld dat bij de gekozen frequentie hoort.
+
 ## 0.1.3
 
 - In 0.1.2 schreef nginx het bezoekersadres wel in `X-Forwarded-For`, maar waitress haalde die kop weg vóór de app. Daardoor deelden alle bezoekers op https één teller. In ssl-modus vertrouwt waitress alleen `X-Forwarded-For` van 127.0.0.1, één hop, en niet `X-Forwarded-Proto`. Op gewoon http blijft een meegestuurde kop genegeerd.

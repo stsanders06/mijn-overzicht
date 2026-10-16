@@ -8,7 +8,7 @@
   </div>
   <a class="knop rust" href="{{ url_for('lasten') }}">Terug</a>
 </header>
-<form class="kaart" method="post">
+<form class="kaart" method="post" novalidate>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label for="naam">Naam</label>
   <input id="naam" name="naam" value="{{ waarden.naam }}"{% if gekoppeld %} readonly{% else %} required{% endif %}>

@@ -6,7 +6,7 @@
 {% if wacht %}
 <p class="wacht">Te veel pogingen. Wacht {{ wacht }} seconden.</p>
 {% endif %}
-<form method="post" action="{{ url_for('account_instellen') }}">
+<form method="post" action="{{ url_for('account_instellen') }}" novalidate>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label for="code">Instelcode</label>
   <input id="code" name="code" autocomplete="one-time-code" required>

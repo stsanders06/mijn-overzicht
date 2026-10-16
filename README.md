@@ -22,7 +22,7 @@ Wijzig je daarna een optie (wachtwoord of ssl), start de add-on opnieuw. Een lee
 
 Uitloggen, het wachtwoord wijzigen in de site, en het wachtwoord wijzigen in de add-on maken oude sessies ongeldig.
 
-Na een paar foute pogingen vanaf hetzelfde adres wacht het inloggen even, en daarna steeds iets langer, tot hooguit 60 seconden. Dat geldt ook voor een juist wachtwoord vanaf dat adres. Elke foute poging telt voor dat adres, ook als er al vanaf andere adressen is geprobeerd. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit, werkt meteen. Een geblokkeerde poging vanaf een adres dat al wacht, telt niet extra mee. Heel veel foute pogingen in korte tijd vertragen de controle voor iedereen even, tot 2 seconden, zonder een juist wachtwoord van een vrij adres te weigeren.
+Na een paar foute pogingen vanaf hetzelfde adres wacht het inloggen even, en daarna steeds iets langer, tot hooguit 60 seconden. Dat geldt ook voor een juist wachtwoord vanaf dat adres. Elke foute poging telt voor dat adres, ook als er al vanaf andere adressen is geprobeerd. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit, werkt meteen en wacht niet achter andere pogingen. Een geblokkeerde poging vanaf een adres dat al wacht, telt niet extra mee. Zitten er in 30 seconden al 8 foute controles, dan krijgt een extra foute poging meteen het antwoord om het later opnieuw te proberen, zonder de controle te laten wachten.
 
 De back-up is een zip van de database en de bestanden. De wachtwoord-hash en `secret_key` zitten er niet in. Na terugzetten zet je het wachtwoord weer in de add-on en start je opnieuw.
 

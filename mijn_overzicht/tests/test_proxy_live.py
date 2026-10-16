@@ -1,6 +1,7 @@
 """Echte waitress, niet de Flask-testclient. Die ziet X-Forwarded-For nooit."""
 import socket
 import threading
+import time
 import urllib.parse
 
 from waitress import create_server
@@ -61,10 +62,19 @@ def _verzoek(poort, methode, pad, lichaam=b"", koek="", xff=""):
     return status, tekst, _lichaam(tekst, rest)
 
 
+def _token(body):
+    return body.decode("utf-8", "replace").split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+
+
+def _post_inlog(poort, xff, wachtwoord, koek, token):
+    lichaam = urllib.parse.urlencode({"csrf_token": token, "wachtwoord": wachtwoord}).encode()
+    return _verzoek(poort, "POST", "/inloggen", lichaam, koek, xff)
+
+
 def _login(poort, xff, wachtwoord, koek=""):
     _status, kop, body = _verzoek(poort, "GET", "/inloggen", koek=koek, xff=xff)
     koek = _koek(kop, koek)
-    token = body.decode("utf-8", "replace").split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    token = _token(body)
     lichaam = urllib.parse.urlencode({"csrf_token": token, "wachtwoord": wachtwoord}).encode()
     status, kop, body = _verzoek(poort, "POST", "/inloggen", lichaam, koek, xff)
     return status, kop, body, _koek(kop, koek)
@@ -87,6 +97,84 @@ def _server(app, **extra):
 def _stop(server, thread):
     server.close()
     thread.join(timeout=3)
+
+
+def test_flood_houdt_een_juist_wachtwoord_snel(app, monkeypatch):
+    """Vijftig adressen vullen het venster. Een vers adres blijft onder 1,5 s, en GET / ook."""
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    overzicht.HTTPS_ACTIEF = True
+    overzicht.app.config["SESSION_COOKIE_SECURE"] = True
+    aantal = 50
+    # Al gefaald, maar nog niet in de eigen pauze. Het venster zit vol, dus hun
+    # extra foute pogingen mogen geen hash meer doen zodra het herkansingsslot bezet is.
+    overzicht.MISLUKKINGEN.extend([vast] * overzicht.VENSTER_MAX)
+    for n in range(1, aantal + 1):
+        overzicht.POGINGEN_IP[f"203.0.113.{n}"] = (1, vast)
+    server, thread = _server(app, **overzicht.WAITRESS_HTTPS)
+    stop = threading.Event()
+    aanvallers = []
+    try:
+        poort = server.effective_port
+
+        def aanvaller(n):
+            ip = f"203.0.113.{n}"
+            try:
+                _status, kop, body = _verzoek(poort, "GET", "/inloggen", xff=ip)
+            except OSError:
+                return
+            koek = _koek(kop)
+            try:
+                token = _token(body)
+            except IndexError:
+                return
+            while not stop.is_set():
+                try:
+                    _post_inlog(poort, ip, "fout", koek, token)
+                except OSError:
+                    if stop.is_set():
+                        return
+
+        aanvallers = [
+            threading.Thread(target=aanvaller, args=(n,), name=f"aanval-{n}", daemon=True)
+            for n in range(1, aantal + 1)
+        ]
+        for draad in aanvallers:
+            draad.start()
+        time.sleep(0.3)
+        t_get = time.perf_counter()
+        status, _kop, _body = _verzoek(poort, "GET", "/", xff="198.51.100.250")
+        duur_get = time.perf_counter() - t_get
+        assert status in {200, 302}
+        assert duur_get < 1.0, duur_get
+        tijden = []
+        for n in range(20):
+            begin = time.perf_counter()
+            status, kop, _body, _sessie = _login(poort, "198.51.100.77", TEST_WACHTWOORD)
+            duur = time.perf_counter() - begin
+            tijden.append(duur)
+            assert status == 302, (n, status, duur)
+            assert urllib.parse.urlsplit(_locatie(kop)).path == "/", (n, _locatie(kop))
+            assert duur < 1.5, (n, duur)
+        t_get = time.perf_counter()
+        status, _kop, _body = _verzoek(poort, "GET", "/", xff="198.51.100.251")
+        duur_na = time.perf_counter() - t_get
+        assert status in {200, 302}
+        assert duur_na < 1.0, duur_na
+        geordend = sorted(tijden)
+        print(
+            f"flood 20/20 max={geordend[-1]:.3f}s median={geordend[len(geordend)//2]:.3f}s "
+            f"get={duur_get:.3f}s get_na={duur_na:.3f}s"
+        )
+    finally:
+        stop.set()
+        for draad in aanvallers:
+            draad.join(timeout=2)
+        _stop(server, thread)
+        overzicht.POGINGEN_IP.clear()
+        overzicht.MISLUKKINGEN.clear()
+        overzicht.HTTPS_ACTIEF = False
+        overzicht.app.config["SESSION_COOKIE_SECURE"] = False
 
 
 def test_waitress_telt_xff_alleen_met_de_ssl_config(app, monkeypatch):
