@@ -20,7 +20,7 @@ COPY rootfs /
 RUN chmod a+x /usr/bin/mijn-overzicht
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.1.4
+ARG BUILD_VERSION=0.1.6
 ENV ADDON_VERSION=${BUILD_VERSION}
 LABEL \
     io.hass.name="Mijn Overzicht" \
