@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import sys
@@ -169,6 +170,42 @@ def test_leeg_wachtwoord_is_nederlands(uitgelogde_client):
     )
     tekst = antwoord.get_data(as_text=True)
     assert "Vul je wachtwoord in." in tekst
+    assert "Fill out this field" not in tekst
+
+
+def test_elk_formulier_met_verplicht_veld_heeft_novalidate():
+    root = pathlib.Path(overzicht.__file__).resolve().parent / "templates"
+    gezien = []
+    for pad in sorted(root.rglob("*.html")):
+        tekst = pad.read_text(encoding="utf-8")
+        for opening, lichaam in re.findall(r"<form\b([^>]*)>(.*?)</form>", tekst, flags=re.I | re.S):
+            if not re.search(r"(?:^|[\s\"'{])required(?:[\s=\"'/>{]|$)", lichaam):
+                continue
+            gezien.append(pad.name)
+            assert "novalidate" in opening, pad.name
+    assert sorted(gezien) == [
+        "bezit_form.html",
+        "contact_form.html",
+        "datum_form.html",
+        "document_form.html",
+        "inloggen.html",
+        "instellen.html",
+        "last_form.html",
+        "verzekering_form.html",
+        "voertuig_form.html",
+    ]
+
+
+def test_leeg_inkomen_geeft_nederlandse_fout(client):
+    pagina = client.get("/inkomen/nieuw").get_data(as_text=True)
+    assert '<form class="kaart" method="post" novalidate>' in pagina
+    antwoord = client.post(
+        "/inkomen/nieuw",
+        data={"csrf_token": "test-token", "soort": "loon", "werkgever": "", "frequentie": "maand"},
+    )
+    assert antwoord.status_code == 400
+    tekst = antwoord.get_data(as_text=True)
+    assert "Vul een naam in." in tekst
     assert "Fill out this field" not in tekst
 
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- Het formulier voor inkomen heeft `novalidate`, net als de andere formulieren met verplichte velden. Een lege naam bij loon geeft “Vul een naam in.” van de server. De browser toont geen Engelse melding.
+
 ## 0.1.4
 
 - De vertraging tot 2 seconden uit 0.1.3 sliep terwijl een slot vastlag. Daardoor stonden alle bezoekers achter elkaar en kon de site na een golf foute pogingen onbereikbaar blijven. Die slaap is weg. Zitten er in 30 seconden al 8 foute controles, dan krijgt een extra foute poging meteen “Probeer het later opnieuw.” (429), zonder hash. Een juist wachtwoord vanaf een adres dat in dat venster nog niet gefaald heeft, wordt meteen gecontroleerd op een eigen slot en wacht niet achter de aanval. Er lopen hooguit een paar hashes tegelijk; is dat vol, dan ook meteen 429.
