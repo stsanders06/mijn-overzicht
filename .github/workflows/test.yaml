@@ -64,8 +64,8 @@ jobs:
             fi
             sleep 1
           done
-          docker logs mijn-overzicht-test | grep -q "ssl staat uit"
-          docker logs mijn-overzicht-test | grep -q "bereikbaar op http://"
+          docker logs mijn-overzicht-test 2>&1 | grep -q "ssl staat uit"
+          docker logs mijn-overzicht-test 2>&1 | grep -q "bereikbaar op http://"
           python3 mijn_overzicht/tests/rook_server.py http://127.0.0.1:8320 \
             || { docker logs mijn-overzicht-test; exit 1; }
           docker rm -f mijn-overzicht-test
@@ -94,7 +94,7 @@ jobs:
             fi
             sleep 1
           done
-          docker logs mijn-overzicht-https | grep -q "bereikbaar op https://"
+          docker logs mijn-overzicht-https 2>&1 | grep -q "bereikbaar op https://"
           python3 mijn_overzicht/tests/rook_server.py https://127.0.0.1:8320 \
             || { docker logs mijn-overzicht-https; exit 1; }
           docker rm -f mijn-overzicht-https
