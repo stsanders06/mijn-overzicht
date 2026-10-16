@@ -13,9 +13,18 @@ De site start leeg. Er staan geen voorbeeldgegevens in.
 
    `https://github.com/stsanders06/mijn-overzicht`
 
-2. Installeer **Mijn Overzicht** en start de add-on.
-3. Zet bij de add-on een wachtwoord van minstens 8 tekens, of laat het leeg en kies het de eerste keer dat je de site opent.
-4. Open in de browser `http://<ip-van-home-assistant>:8320`.
+2. Installeer **Mijn Overzicht**. Zet **vóór de eerste start** een wachtwoord van minstens 8 tekens bij de add-on. Start daarna.
+3. Open in de browser `http://<ip-van-home-assistant>:8320` als je op hetzelfde netwerk zit.
+
+Wijzig je daarna een optie (wachtwoord of ssl), start de add-on opnieuw. Een leeg wachtwoordveld laat een bestaand wachtwoord staan. Alleen als er nog geen account is én het veld leeg is, schrijft de add-on een **eenmalige instelcode** in het log. Die code gebruik je op `/instellen`. Een nieuwe start maakt een nieuwe code.
+
+**Zet poort 8320 niet open naar internet.** Geen port forward. Gebruik het thuisnetwerk, of een VPN zoals WireGuard of Tailscale. Wil je versleuteld verkeer, zet `ssl` aan en wijs `certfile` en `keyfile` naar certificaten in `/ssl` (de map is alleen-lezen gekoppeld). Dan wordt het cookie `Secure` en stuurt de site HSTS. Zonder ssl blijft het gewoon http op het eigen netwerk, en is het cookie niet `Secure`.
+
+Uitloggen, het wachtwoord wijzigen in de site, en het wachtwoord wijzigen in de add-on maken oude sessies ongeldig.
+
+Na een paar foute pogingen wacht het inloggen even, en daarna steeds iets langer. Vanaf hetzelfde adres loopt dat op tot hooguit 60 seconden. Voor het account zelf is het plafond 8 seconden, zodat een ander adres je niet lang buitensluit. Een geblokkeerde poging telt niet extra mee.
+
+De back-up is een zip van de database en de bestanden. De wachtwoord-hash en `secret_key` zitten er niet in. Na terugzetten zet je het wachtwoord weer in de add-on en start je opnieuw.
 
 De add-on heeft geen ingress en geen paneel. Hij is alleen bereikbaar op poort 8320.
 
@@ -30,7 +39,7 @@ Gegevens (database, uploads en het sessiegeheim) blijven in `/data` staan bij ee
 - **Bezittingen:** aankoop, winkel, prijs, garantie (“nog X maanden garantie” of “verlopen”) en de bon als foto of PDF, ook HEIC uit de fotobibliotheek.
 - **Inkomen & werk, belangrijke datums, contacten, documenten, gezondheid / noodinfo.**
 - **Gekoppeld:** elk item kan naar elk ander item wijzen. De link is aan beide kanten te zien en aanklikbaar. Zoeken, toevoegen en weghalen doe je op de detailpagina.
-- **Zoeken** over alle items, en een **back-up** als zip van de database en de bestanden.
+- **Zoeken** over alle items, en een **back-up** als zip van de database en de bestanden, zonder wachtwoord-hash en zonder sessiesleutel.
 
 ## Lokaal draaien
 

@@ -6,13 +6,17 @@ Gegevens staan in /data en blijven bij een update staan. Er worden geen
 voorbeeldgegevens ingevuld.
 """
 import calendar
+import hashlib
 import io
 import json
 import logging
 import os
 import re
 import secrets
+import socket
 import sqlite3
+import ssl
+import sys
 import tempfile
 import time
 import zipfile
@@ -34,6 +38,8 @@ DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "d
 DB_PATH = os.path.join(DATA_DIR, "overzicht.db")
 BESTAND_DIR = os.path.join(DATA_DIR, "bestanden")
 OPTIONS_PATH = os.path.join(DATA_DIR, "options.json")
+SETUP_PATH = os.path.join(DATA_DIR, "setup_code")
+SSL_DIR = os.environ.get("SSL_DIR", "/ssl")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(BESTAND_DIR, exist_ok=True)
@@ -44,8 +50,12 @@ BINNENKORT_DAGEN = 60
 VERLOPEN_DAGEN = 365
 
 WACHTWOORD_MINIMUM = 8
-MAX_POGINGEN = 5
-WACHTTIJD_MINUTEN = 15
+# Vertraging begint pas na een paar mislukte pogingen en loopt exponentieel op,
+# met een plafond. Per IP mag dat een minuut worden; voor het account zelf
+# hooguit een paar seconden, zodat een ander adres Stone niet lang buitensluit.
+PAUZE_NA_POGINGEN = 3
+IP_PLAFOND = 60
+ACCOUNT_PLAFOND = 8
 SESSIE_DAGEN = 30
 MAX_BESTAND = 12 * 1024 * 1024
 MAX_VERZOEK = 32 * 1024 * 1024
@@ -236,15 +246,18 @@ app = Flask(__name__)
 app.secret_key = _secret_key()
 app.jinja_env.undefined = StrictUndefined
 app.config["MAX_CONTENT_LENGTH"] = MAX_VERZOEK
-# Secure blijft uit: de add-on is http op het eigen netwerk. Met Secure zou de
-# browser het sessiecookie niet bewaren en kun je niet ingelogd blijven.
+# Secure en HSTS gaan aan in activeer_https_vlag(), alleen als ssl aan staat.
+# Op gewoon http zou Secure het cookie blokkeren.
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = False
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSIE_DAGEN)
 
 # Eén trage hash, zodat een ontbrekend account niet sneller antwoordt dan een fout wachtwoord.
 DUMMY_HASH = generate_password_hash("niet-het-wachtwoord")
-MISLUKTE_POGINGEN = {}
+POGINGEN_IP = {}
+POGINGEN_ACCOUNT = (0, None)
+HTTPS_ACTIEF = False
 
 
 def verbind():
@@ -264,7 +277,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS account (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             wachtwoord TEXT NOT NULL,
-            aangemaakt TEXT NOT NULL
+            aangemaakt TEXT NOT NULL,
+            sessie_versie INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS verzekeringen (
             id INTEGER PRIMARY KEY,
@@ -390,6 +404,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS koppelingen_b ON koppelingen (type_b, id_b);
         """
     )
+    kolommen = {rij[1] for rij in conn.execute("PRAGMA table_info(account)")}
+    if "sessie_versie" not in kolommen:
+        conn.execute("ALTER TABLE account ADD COLUMN sessie_versie INTEGER NOT NULL DEFAULT 1")
+    conn.commit()
     conn.close()
     if os.path.exists(DB_PATH):
         _chmod(DB_PATH, 0o600)
@@ -413,11 +431,78 @@ def optie_wachtwoord_actief():
     return len(optie_wachtwoord()) >= WACHTWOORD_MINIMUM
 
 
+def _waar(waarde):
+    if isinstance(waarde, bool):
+        return waarde
+    return str(waarde or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def ssl_gevraagd():
+    omgeving = os.environ.get("SSL", "").strip().lower()
+    if omgeving in {"0", "false", "no", "off"}:
+        return False
+    if omgeving in {"1", "true", "yes", "on"}:
+        return True
+    return _waar(lees_opties().get("ssl"))
+
+
+def certificaat_pad(naam, omgeving):
+    override = os.environ.get(omgeving, "").strip()
+    if override:
+        return override
+    naam = naam if isinstance(naam, str) and naam.strip() else ""
+    if not naam:
+        return ""
+    if os.path.isabs(naam):
+        return naam
+    return os.path.join(SSL_DIR, naam)
+
+
+def ssl_paden():
+    opties = lees_opties()
+    cert = certificaat_pad(opties.get("certfile") or "fullchain.pem", "SSL_CERTFILE")
+    sleutel = certificaat_pad(opties.get("keyfile") or "privkey.pem", "SSL_KEYFILE")
+    return cert, sleutel
+
+
+def maak_ssl_context():
+    cert, sleutel = ssl_paden()
+    if not os.path.isfile(cert) or not os.path.isfile(sleutel):
+        logging.getLogger(__name__).error(
+            "SSL staat aan, maar het certificaat of de sleutel ontbreekt."
+        )
+        return None
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, sleutel)
+    return context
+
+
+def activeer_https_vlag():
+    global HTTPS_ACTIEF
+    HTTPS_ACTIEF = ssl_gevraagd()
+    app.config["SESSION_COOKIE_SECURE"] = HTTPS_ACTIEF
+
+
+def vingerafdruk(hash_):
+    return hashlib.sha256((hash_ or "").encode("utf-8")).hexdigest()
+
+
+def lees_account():
+    conn = verbind()
+    rij = conn.execute("SELECT wachtwoord, sessie_versie FROM account WHERE id=1").fetchone()
+    conn.close()
+    return rij
+
+
+def verhoog_sessie_versie(conn):
+    conn.execute("UPDATE account SET sessie_versie = COALESCE(sessie_versie, 1) + 1 WHERE id=1")
+
+
 def synchroniseer_wachtwoord():
     """Het wachtwoord uit de add-on wint, als het lang genoeg is.
 
-    Een leeg veld laat het wachtwoord in de database met rust, zodat je het in
-    de app kunt kiezen. Het wachtwoord zelf komt niet in het log.
+    Een leeg veld laat een bestaand wachtwoord staan. Verandert het wachtwoord,
+    dan worden alle sessies ongeldig. Het wachtwoord zelf komt niet in het log.
     """
     wachtwoord = optie_wachtwoord()
     if not wachtwoord:
@@ -432,17 +517,61 @@ def synchroniseer_wachtwoord():
     rij = conn.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()
     if rij is not None and check_password_hash(rij["wachtwoord"], wachtwoord):
         conn.close()
+        wis_setup_code()
         return
     digest = generate_password_hash(wachtwoord)
     if rij is None:
         conn.execute(
-            "INSERT INTO account (id, wachtwoord, aangemaakt) VALUES (1, ?, ?)",
+            "INSERT INTO account (id, wachtwoord, aangemaakt, sessie_versie) VALUES (1, ?, ?, 1)",
             (digest, vandaag().isoformat()),
         )
     else:
-        conn.execute("UPDATE account SET wachtwoord=? WHERE id=1", (digest,))
+        conn.execute(
+            "UPDATE account SET wachtwoord=?, sessie_versie=COALESCE(sessie_versie, 1) + 1 WHERE id=1",
+            (digest,),
+        )
     conn.commit()
     conn.close()
+    wis_setup_code()
+
+
+def wis_setup_code():
+    try:
+        os.remove(SETUP_PATH)
+    except OSError:
+        pass
+
+
+def zorg_setup_code():
+    """Eenmalige code voor /instellen, alleen als er nog geen account is.
+
+    De code zelf gaat naar het log. Op schijf staat alleen de hash. Een nieuwe
+    start maakt een nieuwe code; de vorige werkt dan niet meer.
+    """
+    if heeft_account() or optie_wachtwoord_actief():
+        wis_setup_code()
+        return None
+    code = secrets.token_urlsafe(9)
+    with open(SETUP_PATH, "w", encoding="utf-8") as bestand:
+        bestand.write(generate_password_hash(code))
+    _chmod(SETUP_PATH, 0o600)
+    logging.getLogger(__name__).warning(
+        "Nog geen account. Zet een wachtwoord in de add-on en herstart, "
+        "of open /instellen met deze eenmalige code: %s",
+        code,
+    )
+    return code
+
+
+def setup_code_klopt(code):
+    try:
+        with open(SETUP_PATH, encoding="utf-8") as bestand:
+            digest = bestand.read().strip()
+    except OSError:
+        return False
+    if not digest or not isinstance(code, str) or not code:
+        return False
+    return check_password_hash(digest, code)
 
 
 def csrf_token():
@@ -537,17 +666,27 @@ app.jinja_env.globals["FREQUENTIES"] = FREQUENTIES
 app.jinja_env.globals["BLOEDGROEPEN"] = BLOEDGROEPEN
 
 
+PAGINA_CSP = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+    "frame-src 'self'; form-action 'self'; base-uri 'self'; object-src 'none'; "
+    "frame-ancestors 'none'"
+)
+BESTAND_CSP = "default-src 'none'; style-src 'none'; script-src 'none'; sandbox; frame-ancestors 'self'"
+
+
 @app.after_request
 def beveiligingskoppen(antwoord):
     antwoord.headers["X-Content-Type-Options"] = "nosniff"
-    antwoord.headers["X-Frame-Options"] = "DENY"
     antwoord.headers["Referrer-Policy"] = "same-origin"
     antwoord.headers["Cache-Control"] = "no-store"
-    antwoord.headers["Content-Security-Policy"] = (
-        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-        "script-src 'self' 'unsafe-inline'; frame-src 'self'; form-action 'self'; "
-        "base-uri 'self'; object-src 'none'"
-    )
+    if request.endpoint == "bestand_zien":
+        antwoord.headers["X-Frame-Options"] = "SAMEORIGIN"
+        antwoord.headers["Content-Security-Policy"] = BESTAND_CSP
+    else:
+        antwoord.headers["X-Frame-Options"] = "DENY"
+        antwoord.headers["Content-Security-Policy"] = PAGINA_CSP
+    if HTTPS_ACTIEF or request.is_secure:
+        antwoord.headers["Strict-Transport-Security"] = "max-age=31536000"
     return antwoord
 
 
@@ -557,8 +696,9 @@ def controleer_inlog():
         return None
     if not heeft_account():
         return redirect(url_for("account_instellen"))
-    if session.get("ingelogd"):
+    if sessie_geldig():
         return None
+    session.clear()
     terug = request.full_path.rstrip("?") or request.path
     return redirect(url_for("inloggen", verder=terug))
 
@@ -578,7 +718,7 @@ def controleer_csrf():
 
 @app.errorhandler(404)
 def niet_gevonden(_fout):
-    if not session.get("ingelogd"):
+    if not sessie_geldig():
         return redirect(url_for("inloggen"))
     return pagina("fout.html", "", titel="Niet gevonden", tekst="Deze pagina bestaat niet."), 404
 
@@ -596,25 +736,67 @@ def heeft_account():
     return aantal > 0
 
 
+def sessie_geldig():
+    if not session.get("ingelogd"):
+        return False
+    rij = lees_account()
+    if rij is None:
+        return False
+    if session.get("sessie_versie") != rij["sessie_versie"]:
+        return False
+    verwacht = vingerafdruk(rij["wachtwoord"])
+    gekregen = session.get("wachtwoord_vinger") or ""
+    if not isinstance(gekregen, str) or len(gekregen) != len(verwacht):
+        return False
+    return secrets.compare_digest(gekregen, verwacht)
+
+
 def _afzender():
     return request.remote_addr or "onbekend"
 
 
+def pauze_seconden(aantal, laatste, plafond):
+    if not laatste or aantal < PAUZE_NA_POGINGEN:
+        return 0
+    duur = min(2 ** (aantal - PAUZE_NA_POGINGEN), plafond)
+    resterend = duur - (nu() - laatste).total_seconds()
+    if resterend <= 0:
+        return 0
+    return int(resterend) + (0 if resterend == int(resterend) else 1)
+
+
 def wachttijd_over():
-    pogingen, laatste = MISLUKTE_POGINGEN.get(_afzender(), (0, None))
-    if pogingen < MAX_POGINGEN or laatste is None:
-        return 0
-    verstreken = (nu() - laatste).total_seconds() / 60
-    if verstreken >= WACHTTIJD_MINUTEN:
-        MISLUKTE_POGINGEN.pop(_afzender(), None)
-        return 0
-    return int(WACHTTIJD_MINUTEN - verstreken) + 1
+    ip_aantal, ip_laatste = POGINGEN_IP.get(_afzender(), (0, None))
+    acc_aantal, acc_laatste = POGINGEN_ACCOUNT
+    return max(
+        pauze_seconden(ip_aantal, ip_laatste, IP_PLAFOND),
+        pauze_seconden(acc_aantal, acc_laatste, ACCOUNT_PLAFOND),
+    )
+
+
+def noteer_mislukking():
+    global POGINGEN_ACCOUNT
+    nu_ = nu()
+    ip = _afzender()
+    aantal, _ = POGINGEN_IP.get(ip, (0, None))
+    POGINGEN_IP[ip] = (aantal + 1, nu_)
+    acc_aantal, _ = POGINGEN_ACCOUNT
+    POGINGEN_ACCOUNT = (acc_aantal + 1, nu_)
+
+
+def wis_mislukkingen():
+    global POGINGEN_ACCOUNT
+    POGINGEN_IP.pop(_afzender(), None)
+    POGINGEN_ACCOUNT = (0, None)
 
 
 def start_sessie(onthoud):
+    rij = lees_account()
     session.clear()
     session["ingelogd"] = True
     session["csrf_token"] = secrets.token_urlsafe(32)
+    session["sessie_versie"] = rij["sessie_versie"] if rij else 0
+    session["wachtwoord_vinger"] = vingerafdruk(rij["wachtwoord"]) if rij else ""
     session.permanent = bool(onthoud)
 
 
@@ -628,8 +810,15 @@ def account_instellen():
     if heeft_account():
         return redirect(url_for("inloggen"))
     if request.method == "POST":
+        if wachttijd_over():
+            return redirect(url_for("account_instellen"))
+        code = request.form.get("code", "")
         wachtwoord = request.form.get("wachtwoord", "")
         nogmaals = request.form.get("nogmaals", "")
+        if not setup_code_klopt(code):
+            noteer_mislukking()
+            melding("De instelcode klopt niet. Hij staat eenmalig in het log van de add-on.", "fout")
+            return redirect(url_for("account_instellen"))
         if len(wachtwoord) < WACHTWOORD_MINIMUM:
             melding(f"Kies een wachtwoord van minstens {WACHTWOORD_MINIMUM} tekens.", "fout")
             return redirect(url_for("account_instellen"))
@@ -639,7 +828,7 @@ def account_instellen():
         conn = verbind()
         try:
             conn.execute(
-                "INSERT INTO account (id, wachtwoord, aangemaakt) VALUES (1, ?, ?)",
+                "INSERT INTO account (id, wachtwoord, aangemaakt, sessie_versie) VALUES (1, ?, ?, 1)",
                 (generate_password_hash(wachtwoord), vandaag().isoformat()),
             )
             conn.commit()
@@ -647,16 +836,18 @@ def account_instellen():
             conn.close()
             return redirect(url_for("inloggen"))
         conn.close()
+        wis_setup_code()
+        wis_mislukkingen()
         start_sessie(True)
         return redirect(url_for("index"))
-    return render_template("instellen.html", minimum=WACHTWOORD_MINIMUM)
+    return render_template("instellen.html", minimum=WACHTWOORD_MINIMUM, wacht=wachttijd_over())
 
 
 @app.route("/inloggen", methods=["GET", "POST"])
 def inloggen():
     if not heeft_account():
         return redirect(url_for("account_instellen"))
-    if session.get("ingelogd"):
+    if sessie_geldig():
         return redirect(url_for("index"))
     verder = request.args.get("verder", "") if request.method == "GET" else request.form.get("verder", "")
     if request.method == "POST":
@@ -668,11 +859,10 @@ def inloggen():
         conn.close()
         hash_ = rij["wachtwoord"] if rij else DUMMY_HASH
         if check_password_hash(hash_, wachtwoord) and rij is not None:
-            MISLUKTE_POGINGEN.pop(_afzender(), None)
+            wis_mislukkingen()
             start_sessie(request.form.get("onthoud") == "ja")
             return redirect(veilig_pad(verder) or url_for("index"))
-        pogingen, _ = MISLUKTE_POGINGEN.get(_afzender(), (0, None))
-        MISLUKTE_POGINGEN[_afzender()] = (pogingen + 1, nu())
+        noteer_mislukking()
         melding("Wachtwoord klopt niet.", "fout")
         return redirect(url_for("inloggen", verder=verder))
     return render_template("inloggen.html", verder=verder, wacht=wachttijd_over())
@@ -680,6 +870,11 @@ def inloggen():
 
 @app.route("/uitloggen", methods=["POST"])
 def uitloggen():
+    conn = verbind()
+    if conn.execute("SELECT id FROM account WHERE id=1").fetchone():
+        verhoog_sessie_versie(conn)
+        conn.commit()
+    conn.close()
     session.clear()
     melding("Je bent uitgelogd.")
     return redirect(url_for("inloggen"))
@@ -708,9 +903,13 @@ def wachtwoord_wijzigen():
         conn.close()
         melding("De twee nieuwe wachtwoorden zijn niet hetzelfde.", "fout")
         return redirect(url_for("index"))
-    conn.execute("UPDATE account SET wachtwoord=? WHERE id=1", (generate_password_hash(nieuw),))
+    conn.execute(
+        "UPDATE account SET wachtwoord=?, sessie_versie=COALESCE(sessie_versie, 1) + 1 WHERE id=1",
+        (generate_password_hash(nieuw),),
+    )
     conn.commit()
     conn.close()
+    start_sessie(True)
     melding("Je wachtwoord is gewijzigd.")
     return redirect(url_for("index"))
 
@@ -1466,6 +1665,9 @@ def backup_bytes():
         doel = sqlite3.connect(db_kopie)
         try:
             bron.backup(doel)
+            # De hash hoort niet in een zip die je ergens anders bewaart.
+            doel.execute("UPDATE account SET wachtwoord=''")
+            doel.commit()
         finally:
             doel.close()
         buf = io.BytesIO()
@@ -2915,6 +3117,33 @@ def koppeling_weg(koppel_id):
 init_db()
 herstel_koppelingen()
 synchroniseer_wachtwoord()
+activeer_https_vlag()
+
+
+def start_server(poort):
+    log = logging.getLogger(__name__)
+    schema = "https" if HTTPS_ACTIEF else "http"
+    if HTTPS_ACTIEF:
+        context = maak_ssl_context()
+        if context is None:
+            sys.exit(1)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", poort))
+        sock.listen(128)
+        beveiligd = context.wrap_socket(sock, server_side=True)
+        from waitress import serve
+
+        log.info("Mijn Overzicht %s luistert op %s poort %s", VERSIE, schema, poort)
+        serve(app, sockets=[beveiligd], url_scheme="https", threads=4)
+        return
+    log.info("Mijn Overzicht %s luistert op %s poort %s", VERSIE, schema, poort)
+    try:
+        from waitress import serve
+
+        serve(app, host="0.0.0.0", port=poort, threads=4)
+    except ImportError:
+        app.run(host="0.0.0.0", port=poort)
 
 
 if __name__ == "__main__":
@@ -2931,11 +3160,8 @@ if __name__ == "__main__":
         level=niveaus.get(os.environ.get("LOG_LEVEL", "info").lower(), logging.INFO),
         format="[%(asctime)s] %(levelname)s: %(message)s",
     )
+    activeer_https_vlag()
+    if not heeft_account():
+        zorg_setup_code()
     poort = int(os.environ.get("PORT", "8320"))
-    logging.getLogger(__name__).info("Mijn Overzicht %s luistert op poort %s", VERSIE, poort)
-    try:
-        from waitress import serve
-
-        serve(app, host="0.0.0.0", port=poort, threads=4)
-    except ImportError:
-        app.run(host="0.0.0.0", port=poort)
+    start_server(poort)

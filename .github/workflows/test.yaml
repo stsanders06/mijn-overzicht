@@ -29,3 +29,38 @@ jobs:
 
       - name: Pytest
         run: python -m pytest
+
+  addon-image:
+    name: Add-on image (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bouw het amd64-image
+        run: |
+          docker build \
+            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20 \
+            --build-arg BUILD_VERSION=0.1.0 \
+            --tag mijn-overzicht:test \
+            ./mijn_overzicht
+
+      - name: Container start en de loginpagina antwoordt
+        run: |
+          mkdir -p /tmp/addon-data
+          printf '%s\n' '{"wachtwoord":"rooktest-wachtwoord","log_level":"info","ssl":false,"certfile":"fullchain.pem","keyfile":"privkey.pem"}' > /tmp/addon-data/options.json
+          docker run -d --name mijn-overzicht-test \
+            -v /tmp/addon-data:/data \
+            -p 8320:8320 \
+            mijn-overzicht:test
+          for i in $(seq 1 30); do
+            if curl -fsS -o /tmp/login.html http://127.0.0.1:8320/inloggen; then
+              echo "Loginpagina antwoordt na ${i}s"
+              grep -q "Inloggen" /tmp/login.html
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Add-on antwoordde niet binnen 30 seconden"
+          docker logs mijn-overzicht-test
+          exit 1

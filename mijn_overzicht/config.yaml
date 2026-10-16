@@ -11,20 +11,27 @@ arch:
   - amd64
 init: false
 ingress: false
-hassio_api: true
 homeassistant_api: false
 auth_api: false
 host_network: false
 boot: auto
+map:
+  - ssl:ro
 ports:
   8320/tcp: 8320
 ports_description:
   8320/tcp: >-
-    Webinterface. Open http://<ip-van-home-assistant>:8320 in je browser.
-    Er is bewust geen zijbalk in Home Assistant.
+    Webinterface op het eigen netwerk. Zet deze poort niet open naar internet.
+    Met ssl uit is het http, met ssl aan https. Er is geen zijbalk in Home Assistant.
 options:
   wachtwoord: ""
   log_level: info
+  ssl: false
+  certfile: fullchain.pem
+  keyfile: privkey.pem
 schema:
   wachtwoord: password?
   log_level: list(trace|debug|info|notice|warning|error|fatal)
+  ssl: bool
+  certfile: str
+  keyfile: str

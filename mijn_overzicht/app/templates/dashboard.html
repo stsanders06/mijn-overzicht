@@ -40,7 +40,7 @@
 
 <section class="kaart">
   <h2>Back-up</h2>
-  <p class="stil">Een zip met de database en de bestanden. Bewaar die ergens anders.</p>
+  <p class="stil">Een zip met de database en de bestanden. Het wachtwoord en de sessiesleutel zitten er niet in. Bewaar de zip ergens anders. Na terugzetten vul je het wachtwoord opnieuw in bij de add-on en start je opnieuw.</p>
   <form method="post" action="{{ url_for('backup') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button class="knop rust" type="submit">Back-up downloaden</button>

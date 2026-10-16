@@ -1,5 +1,8 @@
 """CRUD, totalen, garantie, uploads en back-up."""
 import io
+import os
+import sqlite3
+import tempfile
 import zipfile
 from datetime import date, timedelta
 
@@ -162,7 +165,15 @@ def test_bon_png_heic_en_pdf_en_html_wordt_geweigerd(post, client):
         data={"titel": "Polis", "bestanden": (io.BytesIO(PDF), "polis.pdf")},
         content_type="multipart/form-data",
     )
-    assert client.get("/bestand/2").mimetype == "application/pdf"
+    pdf = client.get("/bestand/2")
+    assert pdf.mimetype == "application/pdf"
+    assert pdf.headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert "frame-ancestors 'self'" in pdf.headers["Content-Security-Policy"]
+    assert "sandbox" in pdf.headers["Content-Security-Policy"]
+    pagina = client.get("/")
+    assert pagina.headers["X-Frame-Options"] == "DENY"
+    assert "frame-ancestors 'none'" in pagina.headers["Content-Security-Policy"]
+    assert "unsafe-inline" not in pagina.headers["Content-Security-Policy"]
     post(
         "/voertuigen/nieuw",
         data={
@@ -187,6 +198,19 @@ def test_backup_bevat_database_en_bestanden_niet_de_sleutel(post, client):
     assert "overzicht.db" in namen
     assert any(naam.startswith("bestanden/") for naam in namen)
     assert not any("secret" in naam or naam.endswith("options.json") for naam in namen)
+    fd, pad = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        with open(pad, "wb") as bestand:
+            bestand.write(archief.read("overzicht.db"))
+        kopie = sqlite3.connect(pad)
+        assert kopie.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()[0] == ""
+        kopie.close()
+    finally:
+        os.remove(pad)
+    live = overzicht.verbind()
+    assert live.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()[0]
+    live.close()
 
 
 def test_overige_tabbladen_en_zoeken(post, client):

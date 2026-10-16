@@ -20,7 +20,8 @@ COPY rootfs /
 RUN chmod a+x /usr/bin/mijn-overzicht
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION
+ARG BUILD_VERSION=0.1.0
+ENV ADDON_VERSION=${BUILD_VERSION}
 LABEL \
     io.hass.name="Mijn Overzicht" \
     io.hass.description="Persoonlijk overzicht, alleen via de browser" \

@@ -2,18 +2,23 @@
 # ==============================================================================
 # Start Mijn Overzicht
 # ==============================================================================
-# Buiten Home Assistant (tests, lokaal) is er geen Supervisor. Dan blijven de
-# standaardwaarden staan en leest de app /data/options.json zelf uit.
-if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
-    log_level="$(bashio::config 'log_level' 'info')"
-    addon_version="$(bashio::addon.version 2>/dev/null || true)"
-else
-    log_level="info"
-    addon_version=""
+# Het wachtwoord en ssl leest de app zelf uit /data/options.json. De versie
+# komt uit de image (ADDON_VERSION). Die vegen we hier niet leeg, en we vragen
+# de Supervisor-API niet om de versie.
+log_level="info"
+if [ -f /data/options.json ]; then
+    gelezen="$(python3 -c 'import json
+try:
+    waarde = json.load(open("/data/options.json")).get("log_level") or "info"
+    print(waarde if isinstance(waarde, str) else "info")
+except Exception:
+    print("info")')"
+    if [ -n "${gelezen}" ]; then
+        log_level="${gelezen}"
+    fi
 fi
 
 export LOG_LEVEL="${log_level}"
-export ADDON_VERSION="${addon_version}"
 export DATA_DIR="/data"
 export PORT="8320"
 

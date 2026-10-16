@@ -97,6 +97,18 @@ def test_webkit_breedtes_menu_en_tikvlakken(app):
                     assert vak["right"] <= vak["w"] + 1
                     assert vak["top"] >= 0
                     assert vak["bottom"] <= vak["h"] + 1
+                    page.click("h1")
+                    assert page.eval_on_selector("details.meer", "el => !el.open")
+                    assert page.eval_on_selector(
+                        ".meer-vel", "el => getComputedStyle(el).display === 'none'"
+                    )
+                    page.click(".meer > summary")
+                    assert page.eval_on_selector("details.meer", "el => el.open")
+                    page.keyboard.press("Escape")
+                    assert page.eval_on_selector("details.meer", "el => !el.open")
+                    assert page.eval_on_selector(
+                        ".meer-vel", "el => getComputedStyle(el).display === 'none'"
+                    )
                 page.close()
             browser.close()
     finally:

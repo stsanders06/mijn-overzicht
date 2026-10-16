@@ -4,7 +4,7 @@
 <h1>Mijn Overzicht</h1>
 <p>Alleen voor jou, op dit netwerk.</p>
 {% if wacht %}
-<p class="wacht">Te veel pogingen. Wacht {{ wacht }} minuten.</p>
+<p class="wacht">Te veel pogingen. Wacht {{ wacht }} seconden.</p>
 {% endif %}
 <form method="post" action="{{ url_for('inloggen') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

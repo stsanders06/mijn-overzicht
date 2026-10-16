@@ -21,6 +21,16 @@ Weghalen van een item wist zijn koppelingen aan beide kanten, plus de bestanden 
 
 ## Inlog
 
-Eén account. Het wachtwoord uit de add-on (minstens 8 tekens) wint bij het starten. Een leeg veld laat het wachtwoord in de database staan. Wijzigen in de app kan alleen als de add-on geen wachtwoord heeft.
+Eén account. Zet het wachtwoord (minstens 8 tekens) in de add-on **vóór de eerste start**, en start opnieuw nadat je een optie wijzigt. Een leeg veld laat een bestaand wachtwoord staan en wist het niet. Is er nog geen account, dan staat er bij het starten een eenmalige instelcode in het log. `/instellen` accepteert alleen die code. Op schijf staat de hash, niet de code zelf. Een nieuwe start vervangt de code.
 
-De sessie is HttpOnly en SameSite=Lax, zonder Secure, omdat de site op http in het eigen netwerk draait. Na vijf foute pogingen wacht het inloggen een kwartier. Elk formulier stuurt een CSRF-kenmerk mee.
+Wijzigen in de app kan alleen als de add-on geen wachtwoord heeft. Uitloggen, wijzigen in de app en wijzigen via de add-on verhogen een sessieversie en een vingerafdruk van de hash. Oude cookies werken daarna niet meer. Wie net zelf het wachtwoord in de app wijzigt, blijft ingelogd met een nieuw cookie.
+
+Op http is het cookie HttpOnly en SameSite=Lax, zonder Secure. Met `ssl: true` leest de app `certfile` en `keyfile` uit `/ssl`, zet het cookie op Secure en stuurt HSTS. Ontbreekt het certificaat, dan start de add-on niet (geen stille terugval naar http).
+
+Foute pogingen: na 3 mislukkingen wacht het inloggen 1 seconde, daarna 2, 4, enzovoort. Per adres is het plafond 60 seconden, voor het account 8 seconden. Een ander apparaat wacht dus hooguit 8 seconden, ook als iemand anders blijft proberen. Tijdens het wachten telt een nieuwe poging niet mee. Elk formulier stuurt een CSRF-kenmerk mee.
+
+Zet poort 8320 niet open naar internet. Gebruik het eigen netwerk of een VPN (WireGuard of Tailscale), of https via de certificaten van Home Assistant.
+
+## Back-up
+
+De zip bevat `overzicht.db` en `bestanden/`. In die kopie van de database is de wachtwoord-hash leeg. `secret_key` en `options.json` zitten er niet in. De draaiende database houdt het wachtwoord. Na terugzetten zet je het wachtwoord in de add-on en start je opnieuw.
