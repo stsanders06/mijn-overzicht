@@ -125,7 +125,7 @@ def verknipt_post(basis):
                 koek = f"session={stuk.value}"
     lichaam = urllib.parse.urlencode({
         "csrf_token": token,
-        "wachtwoord": "fout",
+        "wachtwoord": WACHTWOORD,
         "extra": "x" * 3000,
     }).encode()
     hoofd = (
@@ -151,9 +151,15 @@ def verknipt_post(basis):
     finally:
         tls.close()
     statusregel = data.split(b"\r\n", 1)[0]
-    if not statusregel.startswith(b"HTTP/1.1 ") or statusregel.endswith(b" 500"):
-        afbreken(f"Verknipt POST mislukte: {statusregel!r}")
-    print(f"Verknipt POST gelukt ({statusregel.decode()})")
+    kop = data.split(b"\r\n\r\n", 1)[0].decode("iso-8859-1", "replace")
+    locatie = ""
+    for regel in kop.split("\r\n"):
+        if regel.lower().startswith("location:"):
+            locatie = regel.split(":", 1)[1].strip()
+    pad = urllib.parse.urlsplit(locatie).path
+    if not statusregel.startswith(b"HTTP/1.1 302") or pad != "/":
+        afbreken(f"Verknipt POST kwam niet op het dashboard: {statusregel!r} {locatie!r}")
+    print("Verknipt POST logt in (302 naar /)")
 
 
 def upload_drie_mb(opener, basis):
@@ -185,10 +191,118 @@ def upload_drie_mb(opener, basis):
     print("Upload van 3 MB gelukt")
 
 
+def _koek_uit(kop, vorige=""):
+    koek = vorige
+    for regel in kop.split("\r\n"):
+        if regel.lower().startswith("set-cookie:"):
+            deel = regel.split(":", 1)[1].strip().split(";", 1)[0]
+            if deel.startswith("session="):
+                koek = deel
+    return koek
+
+
+def verzoek_vanaf(basis, bron, methode, pad, lichaam=b"", koek="", extra=None):
+    host, poort = adres_van(basis)
+    ruw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ruw.settimeout(10)
+    ruw.bind((bron, 0))
+    ruw.connect((host, poort))
+    verbinding = ruw
+    if basis.startswith("https://"):
+        verbinding = ssl._create_unverified_context().wrap_socket(ruw, server_hostname=host)
+    try:
+        regels = [f"{methode} {pad} HTTP/1.1", f"Host: {host}"]
+        if koek:
+            regels.append(f"Cookie: {koek}")
+        if extra:
+            regels.extend(extra)
+        if lichaam:
+            regels.append("Content-Type: application/x-www-form-urlencoded")
+            regels.append(f"Content-Length: {len(lichaam)}")
+        regels.append("Connection: close")
+        verbinding.sendall(("\r\n".join(regels) + "\r\n\r\n").encode() + lichaam)
+        data = b""
+        while True:
+            stuk = verbinding.recv(65536)
+            if not stuk:
+                break
+            data += stuk
+    finally:
+        verbinding.close()
+    kop, _, body = data.partition(b"\r\n\r\n")
+    tekst = kop.decode("iso-8859-1", "replace")
+    status = int(tekst.split("\r\n", 1)[0].split()[1])
+    return status, tekst, body
+
+
+def _pad_uit(kop):
+    for regel in kop.split("\r\n"):
+        if regel.lower().startswith("location:"):
+            return urllib.parse.urlsplit(regel.split(":", 1)[1].strip()).path or "/"
+    return ""
+
+
+def xff_van_nginx(basis):
+    """Nginx moet het meegestuurde X-Forwarded-For vervangen door het bronadres."""
+
+    def ronde(bron, xff, wachtwoord, koek=""):
+        _status, kop, body = verzoek_vanaf(
+            basis, bron, "GET", "/inloggen", koek=koek, extra=[f"X-Forwarded-For: {xff}"],
+        )
+        koek = _koek_uit(kop, koek)
+        token = csrf_uit(body)
+        lichaam = urllib.parse.urlencode({"csrf_token": token, "wachtwoord": wachtwoord}).encode()
+        status, kop, body = verzoek_vanaf(
+            basis, bron, "POST", "/inloggen", lichaam, koek, [f"X-Forwarded-For: {xff}"],
+        )
+        return status, kop, body, _koek_uit(kop, koek)
+
+    koek = ""
+    for _ in range(3):
+        _status, _kop, _body, koek = ronde("127.0.0.2", "203.0.113.8", "fout", koek)
+    fouten = []
+
+    def ander_adres():
+        try:
+            status, kop, body, koek3 = ronde("127.0.0.3", "203.0.113.8", WACHTWOORD)
+            if status != 302 or _pad_uit(kop) != "/":
+                fouten.append(f"ander adres kreeg {status} {_pad_uit(kop)}")
+                return
+            status, _kop, body = verzoek_vanaf(basis, "127.0.0.3", "GET", "/", koek=koek3)
+            if b"Dashboard" not in body:
+                fouten.append(f"dashboard ontbreekt ({status})")
+        except Exception as exc:  # noqa: BLE001
+            fouten.append(repr(exc))
+
+    def zelfde_adres():
+        try:
+            _status, kop, body, koek2 = ronde("127.0.0.2", "198.51.100.50", WACHTWOORD, koek)
+            status, _kop, body = verzoek_vanaf(
+                basis, "127.0.0.2", "GET", _pad_uit(kop) or "/inloggen", koek=koek2,
+                extra=["X-Forwarded-For: 198.51.100.50"],
+            )
+            if b"Te veel pogingen" not in body:
+                fouten.append(f"127.0.0.2 is niet gepauzeerd ({status})")
+        except Exception as exc:  # noqa: BLE001
+            fouten.append(repr(exc))
+
+    draden = [threading.Thread(target=ander_adres), threading.Thread(target=zelfde_adres)]
+    for draad in draden:
+        draad.start()
+    for draad in draden:
+        draad.join(timeout=8)
+    if fouten or any(draad.is_alive() for draad in draden):
+        afbreken(f"X-Forwarded-For klopt niet: {fouten}")
+    print("Elk bronadres heeft een eigen pauze; een vervalst X-Forwarded-For telt niet")
+
+
 def main():
     if len(sys.argv) != 2:
         afbreken("Gebruik: rook_server.py <basis-url>")
     basis = sys.argv[1].rstrip("/")
+    if os.environ.get("ROOK_XFF") == "1":
+        xff_van_nginx(basis)
+        return
     opener = opener_voor(basis)
     login_en_post(opener, basis)
     if basis.startswith("https://"):

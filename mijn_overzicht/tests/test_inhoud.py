@@ -4,7 +4,8 @@ import os
 import sqlite3
 import tempfile
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import main as overzicht
 
@@ -30,6 +31,79 @@ def test_totalen_rekenen_maand_kwartaal_en_jaar_omgerekend(post, client):
     tekst = client.get("/").get_data(as_text=True)
     assert "€ 14,17" in tekst
     assert "€ 170,00" in tekst
+
+
+def test_weekritmes_tellen_52_26_en_13_keer():
+    assert overzicht.per_jaar_cent(1000, "week") == 52 * 1000
+    assert overzicht.per_jaar_cent(1000, "twee_weken") == 26 * 1000
+    assert overzicht.per_jaar_cent(3295, "vier_weken") == 13 * 3295
+    assert overzicht.totalen([{"bedrag_cent": 3295, "frequentie": "vier_weken"}]) == (
+        (13 * 3295 + 6) // 12,
+        13 * 3295,
+    )
+    assert overzicht.totalen([{"bedrag_cent": 1000, "frequentie": "week"}])[0] == (52 * 1000 + 6) // 12
+    assert overzicht.totalen([{"bedrag_cent": 1000, "frequentie": "twee_weken"}])[0] == (26 * 1000 + 6) // 12
+    assert overzicht.volgende_afschrijving("2026-08-27", "maand", date(2026, 8, 28)) is None
+    assert overzicht.volgende_afschrijving("", "vier_weken", date(2026, 8, 28)) is None
+    assert overzicht.volgende_afschrijving(None, "week", date(2026, 8, 28)) is None
+
+
+def test_volgende_afschrijving_elke_vier_weken_in_amsterdam(monkeypatch):
+    assert str(overzicht.actieve_tijdzone()) == "Europe/Amsterdam"
+    peildatum = date(2026, 8, 27)
+    assert peildatum.weekday() == 3
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", peildatum) == peildatum
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", date(2026, 8, 28)) == date(2026, 9, 24)
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", date(2026, 9, 24)) == date(2026, 9, 24)
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", date(2026, 9, 25)) == date(2026, 10, 22)
+    assert date(2026, 9, 24).weekday() == 3
+    assert date(2026, 10, 22).weekday() == 3
+    assert overzicht.volgende_afschrijving(peildatum, "week", date(2026, 8, 28)) == date(2026, 9, 3)
+    assert overzicht.volgende_afschrijving(peildatum, "twee_weken", date(2026, 8, 28)) == date(2026, 9, 10)
+    # 27 aug 2026 22:30 UTC is 28 aug 00:30 in Amsterdam. De volgende keer is dan 24 sep.
+    utc = datetime(2026, 8, 27, 22, 30, tzinfo=ZoneInfo("UTC"))
+    lokaal = utc.astimezone(overzicht.actieve_tijdzone()).replace(tzinfo=None)
+    assert lokaal.date() == date(2026, 8, 28)
+    monkeypatch.setattr(overzicht, "nu", lambda: lokaal)
+    assert overzicht.vandaag() == date(2026, 8, 28)
+    assert overzicht.volgende_afschrijving("2026-08-27", "vier_weken") == date(2026, 9, 24)
+
+
+def test_paynl_elke_vier_weken_op_dashboard(post, client, monkeypatch):
+    utc = datetime(2026, 8, 27, 22, 30, tzinfo=ZoneInfo("UTC"))
+    lokaal = utc.astimezone(overzicht.actieve_tijdzone()).replace(tzinfo=None)
+    monkeypatch.setattr(overzicht, "nu", lambda: lokaal)
+    post("/lasten/nieuw", data={
+        "naam": "Pay.nl", "categorie": "Abonnement", "bedrag": "32,95",
+        "frequentie": "vier_weken", "referentie": "2026-08-27", "afschrijfdag": "4",
+    })
+    dash = client.get("/").get_data(as_text=True)
+    assert "€ 35,70" in dash
+    assert "€ 428,35" in dash
+    assert "Afschrijving" in dash
+    assert "Pay.nl" in dash
+    assert "24 sep 2026" in dash
+    lijst = client.get("/lasten").get_data(as_text=True)
+    assert "per 4 weken" in lijst
+    assert "volgende 24 sep 2026" in lijst
+    assert "dag 4" not in lijst
+    formulier = client.get("/lasten/1").get_data(as_text=True)
+    assert 'value="2026-08-27"' in formulier
+    assert "Volgende afschrijving 24 sep 2026." in formulier
+    assert 'id="afschrijfdag-veld"' in formulier
+    assert "hidden" not in formulier.split('id="afschrijfdag-veld"', 1)[1].split(">", 1)[0]
+    assert 'id="referentie-veld"' in formulier
+    assert "hidden" not in formulier.split('id="referentie-veld"', 1)[1].split(">", 1)[0]
+
+
+def test_verre_peildatum_blijft_van_binnenkort_af(post, client, monkeypatch):
+    monkeypatch.setattr(overzicht, "nu", lambda: datetime(2026, 8, 28, 0, 30))
+    post("/lasten/nieuw", data={
+        "naam": "Later", "categorie": "Overig", "bedrag": "1",
+        "frequentie": "week", "referentie": "2027-01-01",
+    })
+    assert "volgende 1 jan 2027" in client.get("/lasten").get_data(as_text=True)
+    assert "Later" not in client.get("/").get_data(as_text=True)
 
 
 def test_last_bewerken_en_weghalen(post, client):
@@ -211,6 +285,80 @@ def test_backup_bevat_database_en_bestanden_niet_de_sleutel(post, client):
     live = overzicht.verbind()
     assert live.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()[0]
     live.close()
+
+
+def test_kop_staat_boven_de_kaarten_van_die_categorie():
+    rijen = [
+        {"categorie": "Abonnement", "bedrag_cent": 100, "frequentie": "maand"},
+        {"categorie": "Verzekering", "bedrag_cent": 200, "frequentie": "maand"},
+        {"categorie": "Abonnement", "bedrag_cent": 50, "frequentie": "maand"},
+    ]
+    groepen = overzicht.per_categorie(rijen)
+    assert [groep["naam"] for groep in groepen] == ["Abonnement", "Verzekering"]
+    assert [rij["bedrag_cent"] for rij in groepen[0]["items"]] == [100, 50]
+    assert groepen[1]["items"][0]["categorie"] == "Verzekering"
+
+
+def test_weekritme_zonder_vanaf_geeft_een_hint(post, client):
+    post("/lasten/nieuw", data={"naam": "Krant", "categorie": "Abonnement", "bedrag": "5", "frequentie": "week"})
+    assert "Vul een datum bij Vanaf" in client.get("/lasten").get_data(as_text=True)
+    formulier = client.get("/lasten/nieuw").get_data(as_text=True)
+    assert 'id="referentie-veld"' in formulier
+    assert "hidden" not in formulier.split('id="referentie-veld"', 1)[1].split(">", 1)[0]
+
+
+def test_toeslag_telt_mee_en_krijgt_een_eigen_kop(post, client):
+    post("/inkomen/nieuw", data={
+        "werkgever": "Bakkerij", "netto": "2400", "soort": "loon", "frequentie": "maand", "betaaldag": "25",
+    })
+    post("/inkomen/nieuw", data={
+        "netto": "123", "soort": "toeslag", "toeslag": "zorgtoeslag", "frequentie": "maand",
+    })
+    tekst = client.get("/inkomen").get_data(as_text=True)
+    assert tekst.index("data-groep=\"loon\"") < tekst.index("data-groep=\"toeslag\"")
+    assert tekst.index("Bakkerij") < tekst.index("data-groep=\"toeslag\"")
+    assert "Zorgtoeslag" in tekst
+    assert "€ 2.523,00" in client.get("/").get_data(as_text=True)
+
+
+def test_toeslag_per_vier_weken_wordt_omgerekend(post, client):
+    post("/inkomen/nieuw", data={
+        "werkgever": "Huurtoeslag", "netto": "100", "soort": "toeslag",
+        "toeslag": "huurtoeslag", "frequentie": "vier_weken",
+    })
+    assert overzicht.inkomen_per_maand(10000, "vier_weken") == (13 * 10000 + 6) // 12
+    assert "€ 108,33" in client.get("/").get_data(as_text=True)
+
+
+def test_oud_inkomen_blijft_loon_per_maand(app):
+    conn = overzicht.verbind()
+    conn.execute(
+        """CREATE TABLE inkomens_oud AS
+           SELECT id, werkgever, uren, netto_cent, betaaldag, notitie, aangemaakt FROM inkomens"""
+    )
+    conn.execute("DROP TABLE inkomens")
+    conn.execute("ALTER TABLE inkomens_oud RENAME TO inkomens")
+    conn.execute(
+        """INSERT INTO inkomens (werkgever, uren, netto_cent, betaaldag, notitie, aangemaakt)
+           VALUES ('Oud loon', 40, 300000, 1, '', '2026-01-01')"""
+    )
+    conn.commit()
+    conn.close()
+    try:
+        overzicht.init_db()
+        conn = overzicht.verbind()
+        rij = conn.execute("SELECT soort, toeslag, frequentie, netto_cent FROM inkomens").fetchone()
+        conn.close()
+        assert rij["soort"] == "loon"
+        assert rij["toeslag"] == ""
+        assert rij["frequentie"] == "maand"
+        assert overzicht.inkomen_per_maand(rij["netto_cent"], rij["frequentie"]) == 300000
+    finally:
+        herstel = overzicht.verbind()
+        herstel.execute("DROP TABLE IF EXISTS inkomens")
+        herstel.commit()
+        herstel.close()
+        overzicht.init_db()
 
 
 def test_overige_tabbladen_en_zoeken(post, client):

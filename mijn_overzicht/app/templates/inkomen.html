@@ -6,19 +6,24 @@
     <h1>Inkomen &amp; werk</h1>
     <p class="lead">{% if netto is not none %}Netto samen € {{ netto|bedrag }} per maand.{% else %}Netto vul je zelf in, het blijft leeg tot je het zet.{% endif %}{% if uren %} {{ uren }} contracturen.{% endif %}</p>
   </div>
-  <a class="knop" href="{{ url_for('inkomen_nieuw') }}">Nieuwe werkgever</a>
+  <a class="knop" href="{{ url_for('inkomen_nieuw') }}">Nieuw inkomen</a>
 </header>
-{% for item in items %}
-<article class="kaart">
+{% if groepen %}
+{% for groep in groepen %}
+<p class="groep-kop" data-groep="{{ groep.code }}">{{ groep.naam }} · € {{ groep.maand|bedrag }} / maand</p>
+{% for item in groep["items"] %}
+<article class="kaart" data-groep="{{ groep.code }}">
   <a class="rij-link" href="{{ url_for('inkomen_bewerk', inkomen_id=item.id) }}">
     <span class="naam">{{ item.werkgever }}</span>
-    <span class="bedrag">{% if item.netto_cent is not none %}€ {{ item.netto_cent|bedrag }}{% endif %}</span>
+    <span class="bedrag">{% if item.netto_cent is not none %}€ {{ item.netto_cent|bedrag }} {{ item.per }}{% endif %}</span>
   </a>
-  <p class="stil">{% if item.uren is not none %}{{ item.uren }} uur{% endif %}{% if item.betaaldag %} · betaaldag {{ item.betaaldag }}{% endif %}</p>
+  <p class="stil">{% if item.toeslag_label %}{{ item.toeslag_label }}{% endif %}{% if item.uren is not none %}{% if item.toeslag_label %} · {% endif %}{{ item.uren }} uur{% endif %}{% if item.betaaldag %} · betaaldag {{ item.betaaldag }}{% endif %}</p>
   {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
   {% include "_chips.html" %}
 </article>
-{% else %}
-<p class="kaart stil">Nog geen werkgever.</p>
 {% endfor %}
+{% endfor %}
+{% else %}
+<p class="kaart stil">Nog geen inkomen.</p>
+{% endif %}
 {% endblock %}

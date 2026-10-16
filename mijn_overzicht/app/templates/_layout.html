@@ -38,7 +38,7 @@
   <div class="toasts">
     {% for soort, ruw in berichten %}
     {% set bericht = ruw|uit_json %}
-    <p class="toast {{ soort }}" role="status">{{ bericht.tekst }}<button type="button" class="toast-weg">Sluiten</button></p>
+    <p class="toast {{ soort }}" role="status"><span class="toast-tekst">{{ bericht.tekst }}</span><button type="button" class="toast-weg">Sluiten</button></p>
     {% endfor %}
   </div>
   {% endif %}

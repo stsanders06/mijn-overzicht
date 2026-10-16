@@ -16,14 +16,27 @@
   font-weight: 600;
   font-display: swap;
 }
+:root {
+  --ruimte-1: 4px;
+  --ruimte-3: 12px;
+  --ruimte-4: 16px;
+  --ruimte-6: 24px;
+  --ruimte-7: 32px;
+  --tik: 44px;
+}
 * { box-sizing: border-box; }
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
+  padding:
+    max(var(--ruimte-6), env(safe-area-inset-top, 0px))
+    max(var(--ruimte-4), env(safe-area-inset-right, 0px))
+    max(var(--ruimte-6), env(safe-area-inset-bottom, 0px))
+    max(var(--ruimte-4), env(safe-area-inset-left, 0px));
   background:
     radial-gradient(800px 300px at 50% -10%, rgba(184, 97, 46, 0.16), transparent 55%),
     #172028;
@@ -35,32 +48,34 @@ body {
   width: min(420px, 100%);
   background: #fffdf8;
   border-radius: 22px;
-  padding: 28px 22px;
+  padding: var(--ruimte-7) var(--ruimte-6);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
 }
 h1 {
   font-family: "Atelier Serif", "Liberation Serif", serif;
   font-size: 2rem;
-  margin: 8px 0;
+  margin: var(--ruimte-2) 0;
   letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
 }
 .streep { width: 42px; height: 4px; border-radius: 4px; background: #b8612e; }
-p { color: #5e675f; }
-label { display: block; margin: 14px 0 4px; color: #5e675f; }
+p { color: #5e675f; overflow-wrap: anywhere; }
+label { display: block; margin: var(--ruimte-4) 0 var(--ruimte-1); color: #5e675f; }
 input {
   width: 100%;
-  min-height: 44px;
+  max-width: 100%;
+  min-height: var(--tik);
   border: 1px solid #e3d9c8;
   border-radius: 12px;
   padding: 8px 12px;
   font: inherit;
 }
-.vink { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.vink { display: flex; align-items: center; gap: var(--ruimte-3); min-height: var(--tik); }
 .vink input { width: 22px; min-height: 22px; }
 button {
   width: 100%;
-  min-height: 44px;
-  margin-top: 16px;
+  min-height: var(--tik);
+  margin-top: var(--ruimte-4);
   border: 0;
   border-radius: 12px;
   background: #0f5c50;
@@ -69,5 +84,5 @@ button {
   font-weight: 600;
   cursor: pointer;
 }
-.toast { background: #8d2e2e; color: #fff; border-radius: 12px; padding: 10px 12px; }
+.toast { background: #8d2e2e; color: #fff; border-radius: 12px; padding: var(--ruimte-3); margin: 0 0 var(--ruimte-3); }
 .wacht { color: #8d2e2e; }

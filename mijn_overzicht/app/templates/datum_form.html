@@ -8,7 +8,7 @@
   </div>
   <a class="knop rust" href="{{ url_for('datums') }}">Terug</a>
 </header>
-<form class="kaart" method="post">
+<form class="kaart" method="post" novalidate>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label for="soort">Soort</label>
   <select id="soort" name="soort" required>

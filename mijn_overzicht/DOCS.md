@@ -7,7 +7,7 @@ Alles staat in `/data`:
 - `secret_key` — sessiesleutel, niet in de back-up
 - `options.json` — door de Supervisor geschreven; het wachtwoord wordt hieruit gelezen en niet gelogd
 
-Bedragen staan in centen. Een kwartaalbedrag telt vier keer per jaar, een jaarbedrag één keer. Het maandtotaal is het jaartotaal gedeeld door 12, afgerond op een cent.
+Bedragen staan in centen. Een kwartaalbedrag telt vier keer per jaar, een jaarbedrag één keer. Elke week telt 52 keer, elke 2 weken 26 keer en elke 4 weken 13 keer. Het maandtotaal is het jaartotaal gedeeld door 12, afgerond op een cent. Bij een wekelijks ritme hoort een datum in plaats van een afschrijfdag. De volgende afschrijving is steeds 7, 14 of 28 dagen later, gerekend in Europe/Amsterdam.
 
 Een verzekering met “premie meetellen” maakt of werkt één vaste last bij (`verzekering_id`, uniek). Het dashboard telt alleen vaste lasten, dus de premie komt één keer voor. Haal je die last weg, dan stopt het meetellen; de verzekering blijft.
 
@@ -25,9 +25,9 @@ Eén account. Zet het wachtwoord (minstens 8 tekens) in de add-on **vóór de ee
 
 Wijzigen in de app kan alleen als de add-on geen wachtwoord heeft. Uitloggen, wijzigen in de app en wijzigen via de add-on verhogen een sessieversie en een vingerafdruk van de hash. Oude cookies werken daarna niet meer. Wie net zelf het wachtwoord in de app wijzigt, blijft ingelogd met een nieuw cookie.
 
-Op http is het cookie HttpOnly en SameSite=Lax, zonder Secure. Het log waarschuwt dan dat ssl uit staat. Met `ssl: true` leest de app `certfile` en `keyfile` uit `/ssl` en laat nginx het verkeer afsluiten. Waitress blijft http, alleen op localhost. Het cookie wordt Secure en de site stuurt HSTS voor één dag (`max-age=86400`). Ontbreekt het certificaat, dan start de add-on niet (geen stille terugval naar http). In het log staat het adres als `https://…`.
+Op http is het cookie HttpOnly en SameSite=Lax, zonder Secure. Het log waarschuwt dan dat ssl uit staat. Een meegestuurde `X-Forwarded-For` wordt dan genegeerd. Met `ssl: true` leest de app `certfile` en `keyfile` uit `/ssl` en laat nginx het verkeer afsluiten. Nginx overschrijft `X-Forwarded-For` met het adres van de verbinding. Waitress vertrouwt die kop alleen vanaf 127.0.0.1, één hop, en niet `X-Forwarded-Proto`. Waitress blijft http, alleen op localhost. Het cookie wordt Secure en de site stuurt HSTS voor één dag (`max-age=86400`). Ontbreekt het certificaat, dan start de add-on niet (geen stille terugval naar http). In het log staat het adres als `https://…`. Stopt nginx, of stopt de webserver zonder stopverzoek, dan stopt de add-on. TERM en INT stoppen met code 0. SIGKILL van Python stuurt nginx SIGTERM, zodat die niet op de poort blijft staan.
 
-Foute pogingen: na 3 mislukkingen vanaf hetzelfde adres wacht het inloggen 1 seconde, daarna 2, 4, enzovoort, tot 60 seconden. Tijdens die pauze weigert dat adres ook een juist wachtwoord. Foute pogingen delen daarnaast een korte accountpauze (tot 8 seconden); die houdt een juist wachtwoord vanaf een ander adres niet tegen. Tijdens het wachten telt een nieuwe foute poging niet mee. Elk formulier stuurt een CSRF-kenmerk mee.
+Foute pogingen: na 3 mislukkingen vanaf hetzelfde adres wacht het inloggen 1 seconde, daarna 2, 4, enzovoort, tot 60 seconden. Tijdens die pauze weigert dat adres ook een juist wachtwoord, en nieuwe pogingen vanaf dat adres tellen niet extra mee. Elke foute poging telt wel mee, ook als er al vanaf andere adressen is geprobeerd. Zitten er in 30 seconden al 8 foute controles, dan krijgt een extra foute poging meteen “Probeer het later opnieuw.”, zonder hash en zonder te wachten. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit en in dat venster nog niet gefaald heeft, wordt meteen gecontroleerd. Er lopen hooguit een paar hashes tegelijk. Elk formulier stuurt een CSRF-kenmerk mee. Verplichte velden worden door de server in het Nederlands afgekeurd.
 
 Is het wachtwoord in de database leeg (na het terugzetten van een back-up), dan zegt de inlogpagina dat je het in de add-on moet zetten en opnieuw moet starten.
 

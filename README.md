@@ -22,7 +22,7 @@ Wijzig je daarna een optie (wachtwoord of ssl), start de add-on opnieuw. Een lee
 
 Uitloggen, het wachtwoord wijzigen in de site, en het wachtwoord wijzigen in de add-on maken oude sessies ongeldig.
 
-Na een paar foute pogingen vanaf hetzelfde adres wacht het inloggen even, en daarna steeds iets langer, tot hooguit 60 seconden. Dat geldt ook voor een juist wachtwoord vanaf dat adres. Foute pogingen vanaf andere adressen houden een juist wachtwoord niet tegen. Een geblokkeerde poging telt niet extra mee.
+Na een paar foute pogingen vanaf hetzelfde adres wacht het inloggen even, en daarna steeds iets langer, tot hooguit 60 seconden. Dat geldt ook voor een juist wachtwoord vanaf dat adres. Elke foute poging telt voor dat adres, ook als er al vanaf andere adressen is geprobeerd. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit, werkt meteen en wacht niet achter andere pogingen. Een geblokkeerde poging vanaf een adres dat al wacht, telt niet extra mee. Zitten er in 30 seconden al 8 foute controles, dan krijgt een extra foute poging meteen het antwoord om het later opnieuw te proberen, zonder de controle te laten wachten.
 
 De back-up is een zip van de database en de bestanden. De wachtwoord-hash en `secret_key` zitten er niet in. Na terugzetten zet je het wachtwoord weer in de add-on en start je opnieuw.
 
@@ -33,11 +33,11 @@ Gegevens (database, uploads en het sessiegeheim) blijven in `/data` staan bij ee
 ## Wat erin zit
 
 - **Dashboard:** vaste lasten per maand en per jaar, wat er binnenkort afloopt, en wat je kunt opzeggen.
-- **Vaste lasten & abonnementen:** bedrag, frequentie (maand, kwartaal, jaar), afschrijfdag, rekening, einddatum, opzegtermijn en automatische verlenging. Totalen zijn omgerekend naar een maand.
+- **Vaste lasten & abonnementen:** bedrag, frequentie (elke week, elke 2 weken, elke 4 weken, maand, kwartaal, jaar), afschrijfdag en een datum Vanaf voor het wekelijkse ritme, rekening, einddatum, opzegtermijn en automatische verlenging. Totalen zijn omgerekend naar een maand. Op de lijst staat elke categorie direct boven zijn kaarten.
 - **Verzekeringen:** soort, maatschappij, dekking, polis en premie. Zet “meetellen” aan om de premie één keer als vaste last te tellen.
 - **Voertuigen:** kenteken, bouwjaar, APK, bandenmaat en documenten. Geen kilometerstand.
 - **Bezittingen:** aankoop, winkel, prijs, garantie (“nog X maanden garantie” of “verlopen”) en de bon als foto of PDF, ook HEIC uit de fotobibliotheek.
-- **Inkomen & werk, belangrijke datums, contacten, documenten, gezondheid / noodinfo.**
+- **Inkomen & werk:** loon of een toeslag (zorg, huur, kinderopvang, kindgebonden budget, kinderbijslag of anders), met bedrag, frequentie en betaaldag. Daarnaast belangrijke datums, contacten, documenten en gezondheid / noodinfo.
 - **Gekoppeld:** elk item kan naar elk ander item wijzen. De link is aan beide kanten te zien en aanklikbaar. Zoeken, toevoegen en weghalen doe je op de detailpagina.
 - **Zoeken** over alle items, en een **back-up** als zip van de database en de bestanden, zonder wachtwoord-hash en zonder sessiesleutel.
 

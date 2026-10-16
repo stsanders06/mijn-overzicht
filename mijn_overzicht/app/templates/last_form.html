@@ -8,7 +8,7 @@
   </div>
   <a class="knop rust" href="{{ url_for('lasten') }}">Terug</a>
 </header>
-<form class="kaart" method="post">
+<form class="kaart" method="post" novalidate>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label for="naam">Naam</label>
   <input id="naam" name="naam" value="{{ waarden.naam }}"{% if gekoppeld %} readonly{% else %} required{% endif %}>
@@ -25,7 +25,7 @@
     <div>
       <label for="frequentie">Frequentie</label>
       <select id="frequentie" name="frequentie"{% if gekoppeld %} disabled{% endif %}>
-        {% for code, label in FREQUENTIES %}
+        {% for code, label in LAST_FREQUENTIES %}
         <option value="{{ code }}"{% if waarden.frequentie == code %} selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
@@ -38,10 +38,18 @@
       <input id="bedrag" name="bedrag" inputmode="decimal" value="{{ waarden.bedrag }}"{% if gekoppeld %} readonly{% endif %}>
     </div>
     <div>
-      <label for="afschrijfdag">Afschrijfdag</label>
-      <input id="afschrijfdag" name="afschrijfdag" inputmode="numeric" value="{{ waarden.afschrijfdag }}">
+      <div class="ritme" id="afschrijfdag-veld">
+        <label for="afschrijfdag">Afschrijfdag</label>
+        <input id="afschrijfdag" name="afschrijfdag" inputmode="numeric" value="{{ waarden.afschrijfdag }}">
+      </div>
+      <div class="ritme" id="referentie-veld">
+        <label for="referentie">Vanaf</label>
+        <input id="referentie" name="referentie" type="date" value="{{ waarden.referentie }}">
+      </div>
     </div>
   </div>
+  <p class="stil">Bij elke week, elke 2 weken of elke 4 weken bepaalt Vanaf de volgende afschrijving. Zonder die datum is er geen volgende datum.</p>
+  {% if waarden.volgende %}<p class="stil">Volgende afschrijving {{ waarden.volgende|datum_nl }}.</p>{% endif %}
   <label for="rekening">Betaald vanaf</label>
   <input id="rekening" name="rekening" value="{{ waarden.rekening }}" placeholder="ING betaal">
   <div class="twee">

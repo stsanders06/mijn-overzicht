@@ -1,6 +1,15 @@
 """Inlog, eerste keer, CSRF, sessies en het wachtwoord uit de add-on."""
 import json
+import logging
+import os
 import pathlib
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+import pytest
 
 from conftest import TEST_HASH, TEST_WACHTWOORD
 import main as overzicht
@@ -150,6 +159,36 @@ def test_oude_koek_faalt_na_uitloggen(uitgelogde_client, app):
     assert "/inloggen" in antwoord.headers["Location"]
 
 
+def test_leeg_wachtwoord_is_nederlands(uitgelogde_client):
+    pagina = uitgelogde_client.get("/inloggen").get_data(as_text=True)
+    assert "novalidate" in pagina
+    antwoord = uitgelogde_client.post(
+        "/inloggen",
+        data={"csrf_token": "test-token", "wachtwoord": ""},
+        follow_redirects=True,
+    )
+    tekst = antwoord.get_data(as_text=True)
+    assert "Vul je wachtwoord in." in tekst
+    assert "Fill out this field" not in tekst
+
+
+def test_leeg_formulier_geeft_nederlandse_fout(client):
+    pagina = client.get("/lasten/nieuw").get_data(as_text=True)
+    assert 'novalidate' in pagina
+    opening = pagina.split('id="afschrijfdag-veld"', 1)[1].split(">", 1)[0]
+    assert "hidden" not in opening
+    opening = pagina.split('id="referentie-veld"', 1)[1].split(">", 1)[0]
+    assert "hidden" not in opening
+    antwoord = client.post(
+        "/lasten/nieuw",
+        data={"csrf_token": "test-token", "naam": "", "categorie": "Wonen", "frequentie": "maand"},
+    )
+    assert antwoord.status_code == 400
+    tekst = antwoord.get_data(as_text=True)
+    assert "Vul een naam in." in tekst
+    assert "Fill out this field" not in tekst
+
+
 def test_fout_wachtwoord(uitgelogde_client):
     antwoord = uitgelogde_client.post(
         "/inloggen",
@@ -164,7 +203,7 @@ def test_vijf_fouten_zetten_een_pauze(uitgelogde_client, monkeypatch):
     monkeypatch.setattr(overzicht, "nu", lambda: vast)
     for _ in range(5):
         uitgelogde_client.post("/inloggen", data={"csrf_token": "test-token", "wachtwoord": "fout"})
-    assert overzicht.POGINGEN_ACCOUNT[0] == 3
+    assert overzicht.globale_aantal() == 3
     pagina = uitgelogde_client.get("/inloggen").get_data(as_text=True)
     assert "Wacht" in pagina
     assert "seconden" in pagina
@@ -181,18 +220,17 @@ def test_pauze_is_exponentieel_en_begrensd():
     assert overzicht.pauze_seconden(12, moment, 8) == 8
 
 
-def test_pauze_per_ip_en_account_blokkeert_geen_juist_wachtwoord(app):
+def test_pauze_per_ip_blokkeert_geen_juist_wachtwoord(app):
     moment = overzicht.nu()
     overzicht.POGINGEN_IP["203.0.113.9"] = (12, moment)
-    overzicht.POGINGEN_ACCOUNT = (0, None)
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "203.0.113.9"}):
         assert overzicht.wachttijd_over() == 60
         assert overzicht.ip_wachttijd() == 60
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "198.51.100.4"}):
         assert overzicht.wachttijd_over() == 0
-    overzicht.POGINGEN_ACCOUNT = (12, moment)
+    overzicht.MISLUKKINGEN.extend([moment] * overzicht.VENSTER_MAX)
+    assert overzicht.globale_aantal() >= overzicht.VENSTER_MAX
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "198.51.100.4"}):
-        assert overzicht.account_wachttijd() == 8
         assert overzicht.wachttijd_over() == 0
 
 
@@ -238,6 +276,43 @@ def test_pogingen_per_ip_blijven_begrensd(app):
     assert "203.0.113.50" in overzicht.POGINGEN_IP
 
 
+def test_vergrendeld_adres_blijft_staan(app):
+    moment = overzicht.nu()
+    overzicht.POGINGEN_IP.clear()
+    overzicht.POGINGEN_IP["203.0.113.9"] = (12, moment)
+    for n in range(overzicht.POGINGEN_IP_MAX + 10):
+        overzicht.POGINGEN_IP[f"198.51.{n // 250}.{n % 250}"] = (1, moment)
+    with app.test_request_context(environ_overrides={"REMOTE_ADDR": "203.0.113.50"}):
+        overzicht.noteer_mislukking()
+    assert overzicht.POGINGEN_IP["203.0.113.9"] == (12, moment)
+    assert "203.0.113.50" in overzicht.POGINGEN_IP
+    assert len(overzicht.POGINGEN_IP) <= overzicht.POGINGEN_IP_MAX
+
+
+def test_vol_venster_wacht_niet_en_juist_wachtwoord_lukt(app, monkeypatch):
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    for n in range(overzicht.VENSTER_MAX):
+        antwoord = _inlog_vanaf(app, f"203.0.113.{n + 1}", "fout")
+        assert antwoord.status_code == 302
+        assert "/inloggen" in antwoord.headers["Location"]
+    assert overzicht.globale_aantal() >= overzicht.VENSTER_MAX
+    assert overzicht.app.config["TEST_SLAAP"] == []
+    # Dit adres faalde al. Het herkansingsslot is bezet: meteen 429, geen hash-wachtrij.
+    assert overzicht._herkansing.acquire(blocking=False)
+    try:
+        vol = _inlog_vanaf(app, "203.0.113.1", "fout")
+        assert vol.status_code == 429
+        assert "later" in vol.get_data(as_text=True).lower()
+        assert overzicht.POGINGEN_IP["203.0.113.1"][0] == 1
+        gelukt = _inlog_vanaf(app, "198.51.100.20", TEST_WACHTWOORD)
+        assert gelukt.status_code == 302
+        assert gelukt.headers["Location"].endswith("/")
+    finally:
+        overzicht._herkansing.release()
+    assert overzicht.app.config["TEST_SLAAP"] == []
+
+
 def test_instelcode_staat_altijd_op_stdout(zonder_account, capsys):
     code = overzicht.zorg_setup_code()
     assert code in capsys.readouterr().out
@@ -257,6 +332,151 @@ def test_inlog_legt_lege_hash_na_back_up_uit(uitgelogde_client):
         follow_redirects=True,
     )
     assert "Dashboard" not in antwoord.get_data(as_text=True)
+
+
+def test_elke_foute_poging_telt_ook_bij_draaiende_adressen(app, monkeypatch):
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    adressen = [f"203.0.113.{n}" for n in range(1, 13)]
+    for _ in range(8):
+        for ip in adressen:
+            antwoord = _inlog_vanaf(app, ip, "fout")
+            assert "/inloggen" in antwoord.headers["Location"]
+    for ip in adressen:
+        assert overzicht.POGINGEN_IP[ip][0] == 3
+    assert overzicht.globale_aantal() == len(adressen) * 3
+    goed = _inlog_vanaf(app, "198.51.100.77", TEST_WACHTWOORD)
+    assert goed.headers["Location"].endswith("/")
+
+
+def _inlog_via_proxy(app, ip, wachtwoord, peer="127.0.0.1"):
+    with app.test_client() as browser:
+        with browser.session_transaction() as sessie:
+            sessie["csrf_token"] = "test-token"
+        return browser.post(
+            "/inloggen",
+            data={"csrf_token": "test-token", "wachtwoord": wachtwoord},
+            environ_base={"REMOTE_ADDR": peer},
+            headers={"X-Forwarded-For": ip},
+            follow_redirects=False,
+        )
+
+
+def test_http_negeert_x_forwarded_for(app):
+    overzicht.HTTPS_ACTIEF = False
+    antwoord = _inlog_via_proxy(app, "198.51.100.9", "fout", peer="203.0.113.10")
+    assert "/inloggen" in antwoord.headers["Location"]
+    assert overzicht.POGINGEN_IP["203.0.113.10"][0] == 1
+    assert "198.51.100.9" not in overzicht.POGINGEN_IP
+
+
+def test_de_app_leest_x_forwarded_for_niet_zelf(app, monkeypatch):
+    """Waitress zet het adres. De app heeft geen ProxyFix meer."""
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    overzicht.HTTPS_ACTIEF = True
+    try:
+        antwoord = _inlog_via_proxy(app, "203.0.113.8", "fout")
+        assert "/inloggen" in antwoord.headers["Location"]
+        assert overzicht.POGINGEN_IP["127.0.0.1"][0] == 1
+        assert "203.0.113.8" not in overzicht.POGINGEN_IP
+        genegeerd = _inlog_via_proxy(app, "198.51.100.9", "fout", peer="203.0.113.40")
+        assert "/inloggen" in genegeerd.headers["Location"]
+        assert overzicht.POGINGEN_IP["203.0.113.40"][0] == 1
+        assert "198.51.100.9" not in overzicht.POGINGEN_IP
+    finally:
+        overzicht.HTTPS_ACTIEF = False
+
+
+def test_nginx_config_overschrijft_het_adres_en_geeft_413(app):
+    tekst = overzicht.bouw_nginx_config(8320, 18080, "/tmp/cert.pem", "/tmp/key.pem", "/tmp/nginx.pid", "/tmp/nginx")
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in tekst
+    assert "error_log stderr warn;" in tekst
+    assert "proxy_add_x_forwarded_for" not in tekst
+    assert "server_tokens off;" in tekst
+    assert "error_page 413 @te_groot;" in tekst
+    assert "X-Frame-Options" in tekst
+    assert "Content-Security-Policy" in tekst
+    assert overzicht.nginx_werkmap() != overzicht.DATA_DIR
+    assert not overzicht.nginx_werkmap().startswith(overzicht.DATA_DIR + os.sep)
+
+
+def test_gestopte_nginx_stopt_de_addon():
+    class Nep:
+        def wait(self):
+            return 9
+
+    gestopt = []
+    afsluiten = threading.Event()
+    overzicht.bewaak_nginx(Nep(), afsluiten, os.path.join(overzicht.DATA_DIR, "ontbreekt.pid"), stop=gestopt.append)
+    assert gestopt == [1]
+    afsluiten.set()
+    gestopt.clear()
+    overzicht.bewaak_nginx(Nep(), afsluiten, os.path.join(overzicht.DATA_DIR, "ontbreekt.pid"), stop=gestopt.append)
+    assert gestopt == []
+
+
+def _proces_weg(pid):
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as bestand:
+            staat = bestand.read().rsplit(")", 1)[-1].split()[0]
+    except FileNotFoundError:
+        return True
+    return staat in {"Z", "X"}
+
+
+def test_kind_sterft_als_python_wordt_gedood(tmp_path):
+    helper = os.path.join(os.path.dirname(overzicht.__file__), "sterf_met_ouder.py")
+    pidpad = tmp_path / "kind.pid"
+    ouder = tmp_path / "ouder.py"
+    ouder.write_text(
+        "import os, signal, subprocess, sys, time\n"
+        f"helper = {helper!r}\n"
+        "proc = subprocess.Popen([sys.executable, helper, 'sleep', '30'], start_new_session=True)\n"
+        f"open({str(pidpad)!r}, 'w').write(str(proc.pid))\n"
+        "time.sleep(0.4)\n"
+        "os.kill(os.getpid(), signal.SIGKILL)\n",
+        encoding="utf-8",
+    )
+    subprocess.run([sys.executable, str(ouder)], timeout=5, check=False)
+    kind = int(pidpad.read_text())
+    deadline = time.time() + 3
+    while time.time() < deadline and not _proces_weg(kind):
+        time.sleep(0.05)
+    weg = _proces_weg(kind)
+    if not weg:
+        os.kill(kind, signal.SIGKILL)
+    assert weg
+
+
+def test_stop_nginx_raakt_de_groep_ook_als_de_master_al_weg_is(monkeypatch):
+    signalen = []
+    monkeypatch.setattr(overzicht.os, "killpg", lambda pid, sig: signalen.append((pid, sig)))
+
+    class Dood:
+        pid = 4242
+
+        def poll(self):
+            return 0
+
+    afsluiten = threading.Event()
+    overzicht.stop_nginx(Dood(), afsluiten, os.path.join(overzicht.DATA_DIR, "ontbreekt.pid"))
+    assert afsluiten.is_set()
+    assert (4242, signal.SIGTERM) in signalen
+
+
+def test_term_eindigt_met_code_0(caplog):
+    netjes = threading.Event()
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit) as einde:
+            overzicht.vraag_stop(netjes, signal.SIGTERM)
+        assert einde.value.code == 0
+        assert netjes.is_set()
+        assert overzicht.afsluitcode(netjes) == 0
+        assert overzicht.afsluitcode(threading.Event()) == 1
+    assert "Stopverzoek" in caplog.text
+    assert "De add-on is gestopt." in caplog.text
+    assert "De webserver is gestopt" in caplog.text
 
 
 def test_post_zonder_csrf_wordt_geweigerd(client):

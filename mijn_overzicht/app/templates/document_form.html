@@ -7,7 +7,7 @@
   </div>
   <a class="knop rust" href="{{ url_for('documenten') }}">Terug</a>
 </header>
-<form class="kaart" method="post" enctype="multipart/form-data">
+<form class="kaart" method="post" enctype="multipart/form-data" novalidate>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label for="titel">Titel</label>
   <input id="titel" name="titel" value="{{ waarden.titel }}" required>

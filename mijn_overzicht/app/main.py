@@ -12,17 +12,20 @@ import io
 import json
 import logging
 import os
+import pwd
 import re
 import secrets
+import signal
 import socket
 import sqlite3
 import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -33,7 +36,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 # Hoort gelijk te lopen met version in config.yaml. In Home Assistant wint het
 # versienummer dat de Supervisor heeft geïnstalleerd; anders deze fallback.
-VERSIE_FALLBACK = "0.1.1"
+VERSIE_FALLBACK = "0.1.4"
 VERSIE = os.environ.get("ADDON_VERSION") or VERSIE_FALLBACK
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -53,12 +56,18 @@ VERLOPEN_DAGEN = 365
 
 WACHTWOORD_MINIMUM = 8
 # Vertraging begint pas na een paar mislukte pogingen en loopt exponentieel op.
-# Per adres blokkeert die pauze ook een juist wachtwoord. De accountpauze geldt
-# alleen voor foute pogingen: een juist wachtwoord vanaf een ander adres werkt meteen.
+# Per adres blokkeert die pauze ook een juist wachtwoord, en elke foute poging
+# telt mee. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit,
+# wordt meteen gecontroleerd: er wordt niet geslapen en er is geen wachtrij.
+# Een vol venster slaat extra hashes over. Hooguit een paar hashes tegelijk.
 PAUZE_NA_POGINGEN = 3
 IP_PLAFOND = 60
-ACCOUNT_PLAFOND = 8
 POGINGEN_IP_MAX = 256
+VENSTER_SECONDEN = 30
+VENSTER_MAX = 8
+# Gedeelde hashes. Waitress heeft in ssl-modus 8 threads; de rest blijft vrij
+# voor de rest van de site. Een vol slot antwoordt meteen, zonder te wachten.
+HASH_PARALLEL = 2
 # Een dag. Langer vastzetten op http-naar-https is lastig terug te draaien.
 HSTS_SECONDEN = 86400
 # Waitress blijft http, alleen op localhost. Nginx doet de TLS op de echte poort.
@@ -68,14 +77,26 @@ MAX_BESTAND = 12 * 1024 * 1024
 MAX_VERZOEK = 32 * 1024 * 1024
 
 MAANDEN = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
-MAAL_PER_JAAR = {"maand": 12, "kwartaal": 4, "jaar": 1}
-FREQUENTIE_PER = {"maand": "per maand", "kwartaal": "per kwartaal", "jaar": "per jaar"}
+# Weken zijn 52 per jaar, niet 365/7. Daardoor is elke 4 weken precies 13 keer.
+MAAL_PER_JAAR = {
+    "week": 52, "twee_weken": 26, "vier_weken": 13,
+    "maand": 12, "kwartaal": 4, "jaar": 1,
+}
+INTERVAL_DAGEN = {"week": 7, "twee_weken": 14, "vier_weken": 28}
+FREQUENTIE_PER = {
+    "week": "per week", "twee_weken": "per 2 weken", "vier_weken": "per 4 weken",
+    "maand": "per maand", "kwartaal": "per kwartaal", "jaar": "per jaar",
+}
 
 LAST_CATEGORIEEN = [
     "Wonen", "Energie", "Water", "Telecom", "Verzekering", "Vervoer",
     "Abonnement", "Gemeente", "Overig",
 ]
 FREQUENTIES = [("maand", "Per maand"), ("kwartaal", "Per kwartaal"), ("jaar", "Per jaar")]
+LAST_FREQUENTIES = [
+    ("week", "Elke week"), ("twee_weken", "Elke 2 weken"), ("vier_weken", "Elke 4 weken"),
+    *FREQUENTIES,
+]
 VERZEKERING_SOORTEN = [
     ("zorg", "Zorg"), ("auto", "Auto"), ("motor", "Motor"), ("reis", "Reis"),
     ("inboedel", "Inboedel"), ("opstal", "Opstal"), ("aansprakelijkheid", "Aansprakelijkheid"),
@@ -91,6 +112,26 @@ CONTACT_ROLLEN = [
     ("garage", "Garage"), ("pas_blokkeren", "Pas blokkeren"), ("overig", "Overig"),
 ]
 BLOEDGROEPEN = ["", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "onbekend"]
+INKOMEN_SOORTEN = [("loon", "Loon"), ("toeslag", "Toeslag")]
+TOESLAGEN = [
+    ("zorgtoeslag", "Zorgtoeslag"),
+    ("huurtoeslag", "Huurtoeslag"),
+    ("kinderopvangtoeslag", "Kinderopvangtoeslag"),
+    ("kindgebonden", "Kindgebonden budget"),
+    ("kinderbijslag", "Kinderbijslag"),
+    ("anders", "Anders"),
+]
+# Zelfde argumenten als start_server in ssl-modus. De integratietest gebruikt dit
+# zodat een wijziging hier ook de echte waitress raakt. De app leest
+# X-Forwarded-For niet zelf: waitress zet REMOTE_ADDR al op het clientadres.
+WAITRESS_HTTPS = {
+    "threads": 8,
+    "url_scheme": "https",
+    "trusted_proxy": "127.0.0.1",
+    "trusted_proxy_count": 1,
+    "trusted_proxy_headers": {"x-forwarded-for"},
+    "clear_untrusted_proxy_headers": True,
+}
 
 NAV = [
     ("dashboard", "index", "Dashboard"),
@@ -225,11 +266,15 @@ def actieve_tijdzone():
 
 
 def nu():
-    return datetime.now(actieve_tijdzone()).replace(tzinfo=None)
+    """UTC, aware. Pauzes rekenen hiermee, niet met de lokale klok rond zomertijd."""
+    return datetime.now(timezone.utc)
 
 
 def vandaag():
-    return nu().date()
+    waarde = nu()
+    if waarde.tzinfo is None:
+        return waarde.date()
+    return waarde.astimezone(actieve_tijdzone()).date()
 
 
 def _secret_key():
@@ -263,7 +308,12 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSIE_DAGEN)
 # Eén trage hash, zodat een ontbrekend account niet sneller antwoordt dan een fout wachtwoord.
 DUMMY_HASH = generate_password_hash("niet-het-wachtwoord")
 POGINGEN_IP = {}
-POGINGEN_ACCOUNT = (0, None)
+MISLUKKINGEN = []
+_venster_lock = threading.Lock()
+# Nooit blokkerend pakken, en nooit slapen terwijl een slot vastligt.
+_hash_slots = threading.BoundedSemaphore(HASH_PARALLEL)
+_gereserveerd = threading.BoundedSemaphore(1)
+_herkansing = threading.BoundedSemaphore(1)
 HTTPS_ACTIEF = False
 
 
@@ -311,6 +361,7 @@ def init_db():
             bedrag_cent INTEGER NOT NULL DEFAULT 0,
             frequentie TEXT NOT NULL DEFAULT 'maand',
             afschrijfdag INTEGER,
+            referentie TEXT,
             rekening TEXT NOT NULL DEFAULT '',
             contract_eind TEXT,
             opzegtermijn_dagen INTEGER,
@@ -350,6 +401,9 @@ def init_db():
             uren REAL,
             netto_cent INTEGER,
             betaaldag INTEGER,
+            soort TEXT NOT NULL DEFAULT 'loon',
+            toeslag TEXT NOT NULL DEFAULT '',
+            frequentie TEXT NOT NULL DEFAULT 'maand',
             notitie TEXT NOT NULL DEFAULT '',
             aangemaakt TEXT NOT NULL
         );
@@ -414,6 +468,16 @@ def init_db():
     kolommen = {rij[1] for rij in conn.execute("PRAGMA table_info(account)")}
     if "sessie_versie" not in kolommen:
         conn.execute("ALTER TABLE account ADD COLUMN sessie_versie INTEGER NOT NULL DEFAULT 1")
+    last_kolommen = {rij[1] for rij in conn.execute("PRAGMA table_info(vaste_lasten)")}
+    if "referentie" not in last_kolommen:
+        conn.execute("ALTER TABLE vaste_lasten ADD COLUMN referentie TEXT")
+    inkomen_kolommen = {rij[1] for rij in conn.execute("PRAGMA table_info(inkomens)")}
+    if "soort" not in inkomen_kolommen:
+        conn.execute("ALTER TABLE inkomens ADD COLUMN soort TEXT NOT NULL DEFAULT 'loon'")
+    if "toeslag" not in inkomen_kolommen:
+        conn.execute("ALTER TABLE inkomens ADD COLUMN toeslag TEXT NOT NULL DEFAULT ''")
+    if "frequentie" not in inkomen_kolommen:
+        conn.execute("ALTER TABLE inkomens ADD COLUMN frequentie TEXT NOT NULL DEFAULT 'maand'")
     conn.commit()
     conn.close()
     if os.path.exists(DB_PATH):
@@ -672,7 +736,11 @@ app.jinja_env.globals["VOERTUIG_SOORTEN"] = VOERTUIG_SOORTEN
 app.jinja_env.globals["DATUM_SOORTEN"] = DATUM_SOORTEN
 app.jinja_env.globals["CONTACT_ROLLEN"] = CONTACT_ROLLEN
 app.jinja_env.globals["FREQUENTIES"] = FREQUENTIES
+app.jinja_env.globals["LAST_FREQUENTIES"] = LAST_FREQUENTIES
+app.jinja_env.globals["WEEK_RITMES"] = tuple(INTERVAL_DAGEN)
 app.jinja_env.globals["BLOEDGROEPEN"] = BLOEDGROEPEN
+app.jinja_env.globals["INKOMEN_SOORTEN"] = INKOMEN_SOORTEN
+app.jinja_env.globals["TOESLAGEN"] = TOESLAGEN
 
 
 PAGINA_CSP = (
@@ -779,14 +847,49 @@ def ip_wachttijd():
     return pauze_seconden(aantal, laatste, IP_PLAFOND)
 
 
-def account_wachttijd():
-    aantal, laatste = POGINGEN_ACCOUNT
-    return pauze_seconden(aantal, laatste, ACCOUNT_PLAFOND)
-
-
 def wachttijd_over():
-    """Pauze die het formulier toont: alleen dit adres, niet het hele account."""
+    """Pauze die het formulier toont: alleen dit adres."""
     return ip_wachttijd()
+
+
+def _normaal_moment(waarde):
+    if waarde is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if waarde.tzinfo is None:
+        return waarde.replace(tzinfo=timezone.utc)
+    return waarde.astimezone(timezone.utc)
+
+
+def _venster_bijwerken(nu_):
+    grens = _normaal_moment(nu_) - timedelta(seconds=VENSTER_SECONDEN)
+    MISLUKKINGEN[:] = [tijdstip for tijdstip in MISLUKKINGEN if _normaal_moment(tijdstip) >= grens]
+
+
+def globale_aantal():
+    with _venster_lock:
+        _venster_bijwerken(nu())
+        return len(MISLUKKINGEN)
+
+
+def _ip_vergrendeld(ip):
+    aantal, laatste = POGINGEN_IP.get(ip, (0, None))
+    return pauze_seconden(aantal, laatste, IP_PLAFOND) > 0
+
+
+def ruim_ip_pogingen():
+    """Verwijder eerst oude adressen die niet in hun pauze zitten.
+
+    Een adres in de pauze blijft staan, ook als het tabel vol is. Anders
+    wist een aanvaller met veel adressen de pauze van een ander.
+    """
+    if len(POGINGEN_IP) <= POGINGEN_IP_MAX:
+        return
+    vrij = [ip for ip in list(POGINGEN_IP) if not _ip_vergrendeld(ip)]
+    vrij.sort(key=lambda ip: _normaal_moment(POGINGEN_IP[ip][1]))
+    for ip in vrij:
+        if len(POGINGEN_IP) <= POGINGEN_IP_MAX:
+            return
+        POGINGEN_IP.pop(ip, None)
 
 
 def hash_klopt(hash_, wachtwoord):
@@ -806,23 +909,53 @@ def wachtwoord_ontbreekt():
 
 
 def noteer_mislukking():
-    global POGINGEN_ACCOUNT
     nu_ = nu()
     ip = _afzender()
     aantal, _ = POGINGEN_IP.get(ip, (0, None))
     POGINGEN_IP[ip] = (aantal + 1, nu_)
-    if len(POGINGEN_IP) > POGINGEN_IP_MAX:
-        oudste = sorted(POGINGEN_IP, key=lambda sleutel: POGINGEN_IP[sleutel][1] or datetime.min)
-        for sleutel in oudste[: len(POGINGEN_IP) - POGINGEN_IP_MAX]:
-            POGINGEN_IP.pop(sleutel, None)
-    acc_aantal, _ = POGINGEN_ACCOUNT
-    POGINGEN_ACCOUNT = (acc_aantal + 1, nu_)
+    with _venster_lock:
+        MISLUKKINGEN.append(nu_)
+        _venster_bijwerken(nu_)
+    ruim_ip_pogingen()
 
 
 def wis_mislukkingen():
-    global POGINGEN_ACCOUNT
     POGINGEN_IP.pop(_afzender(), None)
-    POGINGEN_ACCOUNT = (0, None)
+
+
+def _ip_faalde_in_venster():
+    """Dit adres heeft in het huidige venster al een fout wachtwoord gegeven."""
+    aantal, laatste = POGINGEN_IP.get(_afzender(), (0, None))
+    if not laatste or aantal < 1:
+        return False
+    grens = _normaal_moment(nu()) - timedelta(seconds=VENSTER_SECONDEN)
+    return _normaal_moment(laatste) >= grens
+
+
+def _pak_hash_slot():
+    """Een vrij slot, of None. Wacht nooit en slaapt nooit.
+
+    Zit het venster vol, dan draait een adres dat al gefaald heeft niet op
+    het gereserveerde slot. Dat slot blijft vrij voor een adres dat zelf nog
+    niet gefaald heeft, zodat een juist wachtwoord niet achter de aanval wacht.
+    Een adres dat al gefaald heeft maar nog niet in zijn pauze zit, krijgt
+    hooguit het herkansingsslot. Is dat bezet, dan meteen 'later', zonder hash.
+    """
+    vol = globale_aantal() >= VENSTER_MAX
+    if vol and _ip_faalde_in_venster():
+        if _herkansing.acquire(blocking=False):
+            return _herkansing
+        return None
+    if not vol and _hash_slots.acquire(blocking=False):
+        return _hash_slots
+    if _gereserveerd.acquire(blocking=False):
+        return _gereserveerd
+    return None
+
+
+def _later():
+    """Kort antwoord. Geen sjabloon en geen database, zodat de wachtrij leegloopt."""
+    return Response("Probeer het later opnieuw.\n", status=429, mimetype="text/plain; charset=utf-8")
 
 
 def start_sessie(onthoud):
@@ -850,6 +983,15 @@ def account_instellen():
         code = request.form.get("code", "")
         wachtwoord = request.form.get("wachtwoord", "")
         nogmaals = request.form.get("nogmaals", "")
+        if not isinstance(code, str) or not code.strip():
+            melding("Vul de instelcode in.", "fout")
+            return redirect(url_for("account_instellen"))
+        if not isinstance(wachtwoord, str) or not wachtwoord:
+            melding("Vul een wachtwoord in.", "fout")
+            return redirect(url_for("account_instellen"))
+        if not isinstance(nogmaals, str) or not nogmaals:
+            melding("Vul het wachtwoord nog een keer in.", "fout")
+            return redirect(url_for("account_instellen"))
         if not setup_code_klopt(code):
             noteer_mislukking()
             melding("De instelcode klopt niet. Hij staat eenmalig in het log van de add-on.", "fout")
@@ -890,17 +1032,27 @@ def inloggen():
         if ip_wachttijd():
             return redirect(url_for("inloggen"))
         wachtwoord = request.form.get("wachtwoord", "")
-        conn = verbind()
-        rij = conn.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()
-        conn.close()
-        hash_ = rij["wachtwoord"] if rij else ""
-        if rij is not None and hash_klopt(hash_, wachtwoord):
+        if not isinstance(wachtwoord, str) or not wachtwoord:
+            melding("Vul je wachtwoord in.", "fout")
+            return redirect(url_for("inloggen", verder=verder))
+        # Slot eerst. Lukt dat niet, dan meteen 429: geen hash, geen database, geen sjabloon.
+        slot = _pak_hash_slot()
+        if slot is None:
+            return _later()
+        try:
+            conn = verbind()
+            rij = conn.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()
+            conn.close()
+            hash_ = rij["wachtwoord"] if rij else ""
+            klopt = rij is not None and hash_klopt(hash_, wachtwoord)
+        finally:
+            slot.release()
+        if klopt:
             wis_mislukkingen()
             start_sessie(request.form.get("onthoud") == "ja")
             return redirect(veilig_pad(verder) or url_for("index"))
-        # Foute gokken delen een korte accountpauze. Het juiste wachtwoord is hier al langs.
-        if account_wachttijd():
-            return redirect(url_for("inloggen"))
+        # Elke foute gok telt voor dit adres, ook als het account al in de pauze zit.
+        # Zo kan een aanvaller met steeds een nieuw adres niet onbeperkt blijven proberen.
         noteer_mislukking()
         if not str(hash_ or "").strip():
             melding("Er is geen wachtwoord ingesteld. Zet het in de add-on en start opnieuw.", "fout")
@@ -1142,6 +1294,41 @@ def per_jaar_cent(bedrag_cent, frequentie):
     return int(bedrag_cent or 0) * MAAL_PER_JAAR.get(frequentie, 0)
 
 
+def inkomen_per_maand(cent, frequentie):
+    jaar = per_jaar_cent(cent, frequentie or "maand")
+    return (jaar + 6) // 12 if jaar else 0
+
+
+def weekritme(frequentie):
+    return frequentie in INTERVAL_DAGEN
+
+
+def volgende_afschrijving(referentie, frequentie, op=None):
+    """Eerstvolgende afschrijving op of na op, in stappen vanaf de peildatum.
+
+    De stap is 7, 14 of 28 kalenderdagen. op is een datum in Europe/Amsterdam
+    (vandaag() als hij ontbreekt), zodat de grens niet op UTC valt.
+    """
+    dagen = INTERVAL_DAGEN.get(frequentie)
+    if not dagen or not referentie:
+        return None
+    op = op or vandaag()
+    if isinstance(referentie, datetime):
+        start = referentie.date()
+    elif isinstance(referentie, date):
+        start = referentie
+    else:
+        try:
+            start = date.fromisoformat(str(referentie)[:10])
+        except ValueError:
+            return None
+    if start >= op:
+        return start
+    verstreken = (op - start).days
+    stappen = (verstreken + dagen - 1) // dagen
+    return start + timedelta(days=stappen * dagen)
+
+
 def totalen(rijen):
     jaar = sum(per_jaar_cent(rij["bedrag_cent"], rij["frequentie"]) for rij in rijen)
     maand = (jaar + 6) // 12 if jaar else 0
@@ -1150,12 +1337,24 @@ def totalen(rijen):
 
 def per_categorie(rijen):
     bak = {}
+    volgorde = []
     for rij in rijen:
-        bak[rij["categorie"]] = bak.get(rij["categorie"], 0) + per_jaar_cent(rij["bedrag_cent"], rij["frequentie"])
-    return [
-        {"naam": naam, "jaar": bedrag, "maand": (bedrag + 6) // 12}
-        for naam, bedrag in sorted(bak.items())
-    ]
+        naam = rij["categorie"]
+        if naam not in bak:
+            volgorde.append(naam)
+            bak[naam] = []
+        bak[naam].append(rij)
+    groepen = []
+    for naam in volgorde:
+        leden = bak[naam]
+        jaar = sum(per_jaar_cent(lid["bedrag_cent"], lid["frequentie"]) for lid in leden)
+        groepen.append({
+            "naam": naam,
+            "jaar": jaar,
+            "maand": (jaar + 6) // 12 if jaar else 0,
+            "items": leden,
+        })
+    return groepen
 
 
 def tel_maanden_op(start, maanden):
@@ -1289,6 +1488,9 @@ def agenda(conn, op=None):
 
     for rij in conn.execute("SELECT * FROM vaste_lasten"):
         voeg(rij["contract_eind"], rij["naam"], "Contract", f"/lasten/{rij['id']}")
+        volgende = volgende_afschrijving(rij["referentie"], rij["frequentie"], op)
+        if volgende:
+            voeg(volgende.isoformat(), rij["naam"], "Afschrijving", f"/lasten/{rij['id']}")
     for rij in conn.execute("SELECT * FROM verzekeringen"):
         if rij["id"] in gekoppeld:
             continue
@@ -1829,7 +2031,8 @@ def zoek_items(conn, q):
 def leeg_last():
     return {
         "naam": "", "categorie": "Overig", "bedrag": "", "frequentie": "maand",
-        "afschrijfdag": "", "rekening": "", "contract_eind": "",
+        "afschrijfdag": "", "referentie": "", "volgende": None,
+        "rekening": "", "contract_eind": "",
         "opzegtermijn_dagen": "", "automatisch": False, "notitie": "", "link": "",
     }
 
@@ -1841,6 +2044,8 @@ def last_formulier(rij):
         "bedrag": format_bedrag(rij["bedrag_cent"]),
         "frequentie": rij["frequentie"],
         "afschrijfdag": "" if rij["afschrijfdag"] is None else str(rij["afschrijfdag"]),
+        "referentie": rij["referentie"] or "",
+        "volgende": volgende_afschrijving(rij["referentie"], rij["frequentie"]),
         "rekening": rij["rekening"],
         "contract_eind": rij["contract_eind"] or "",
         "opzegtermijn_dagen": "" if rij["opzegtermijn_dagen"] is None else str(rij["opzegtermijn_dagen"]),
@@ -1858,6 +2063,7 @@ def lees_last(gekoppeld):
         "bedrag": request.form.get("bedrag", ""),
         "frequentie": request.form.get("frequentie", ""),
         "afschrijfdag": request.form.get("afschrijfdag", ""),
+        "referentie": request.form.get("referentie", ""),
         "rekening": request.form.get("rekening", ""),
         "contract_eind": request.form.get("contract_eind", ""),
         "opzegtermijn_dagen": request.form.get("opzegtermijn_dagen", ""),
@@ -1873,6 +2079,7 @@ def lees_last(gekoppeld):
         "notitie": tekst(ruw["notitie"], 4000),
         "link": link_veld(ruw["link"], fouten),
         "afschrijfdag": heel_getal(ruw["afschrijfdag"], "Afschrijfdag", fouten, 1, 31),
+        "referentie": datum_veld(ruw["referentie"], "Vanaf", fouten),
     }
     if not gekoppeld:
         gegevens["naam"] = tekst(ruw["naam"], 200)
@@ -1881,19 +2088,20 @@ def lees_last(gekoppeld):
         gegevens["categorie"] = keuze(ruw["categorie"], LAST_CATEGORIEEN, "categorie", fouten)
         bedrag = naar_centen(ruw["bedrag"], "Bedrag", fouten, leeg_is_nul=True)
         gegevens["bedrag_cent"] = 0 if bedrag is None else bedrag
-        gegevens["frequentie"] = keuze(ruw["frequentie"], [code for code, _ in FREQUENTIES], "frequentie", fouten)
+        gegevens["frequentie"] = keuze(ruw["frequentie"], [code for code, _ in LAST_FREQUENTIES], "frequentie", fouten)
+    ruw["volgende"] = volgende_afschrijving(gegevens.get("referentie") or ruw.get("referentie"), ruw.get("frequentie"))
     return gegevens, ruw, fouten
 
 
 def voeg_last_in(conn, gegevens):
     return conn.execute(
         """INSERT INTO vaste_lasten
-           (naam, categorie, bedrag_cent, frequentie, afschrijfdag, rekening, contract_eind,
+           (naam, categorie, bedrag_cent, frequentie, afschrijfdag, referentie, rekening, contract_eind,
             opzegtermijn_dagen, automatisch, notitie, link, verzekering_id, aangemaakt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
         (
             gegevens["naam"], gegevens["categorie"], gegevens["bedrag_cent"], gegevens["frequentie"],
-            gegevens["afschrijfdag"], gegevens["rekening"], gegevens["contract_eind"],
+            gegevens["afschrijfdag"], gegevens["referentie"], gegevens["rekening"], gegevens["contract_eind"],
             gegevens["opzegtermijn_dagen"], gegevens["automatisch"], gegevens["notitie"],
             gegevens["link"], vandaag().isoformat(),
         ),
@@ -1904,11 +2112,11 @@ def werk_last_bij(conn, last_id, gegevens, gekoppeld):
     if gekoppeld:
         conn.execute(
             """UPDATE vaste_lasten
-               SET afschrijfdag=?, rekening=?, contract_eind=?, opzegtermijn_dagen=?,
+               SET afschrijfdag=?, referentie=?, rekening=?, contract_eind=?, opzegtermijn_dagen=?,
                    automatisch=?, notitie=?, link=?
                WHERE id=?""",
             (
-                gegevens["afschrijfdag"], gegevens["rekening"], gegevens["contract_eind"],
+                gegevens["afschrijfdag"], gegevens["referentie"], gegevens["rekening"], gegevens["contract_eind"],
                 gegevens["opzegtermijn_dagen"], gegevens["automatisch"], gegevens["notitie"],
                 gegevens["link"], last_id,
             ),
@@ -1916,12 +2124,12 @@ def werk_last_bij(conn, last_id, gegevens, gekoppeld):
         return
     conn.execute(
         """UPDATE vaste_lasten
-           SET naam=?, categorie=?, bedrag_cent=?, frequentie=?, afschrijfdag=?, rekening=?,
+           SET naam=?, categorie=?, bedrag_cent=?, frequentie=?, afschrijfdag=?, referentie=?, rekening=?,
                contract_eind=?, opzegtermijn_dagen=?, automatisch=?, notitie=?, link=?
            WHERE id=?""",
         (
             gegevens["naam"], gegevens["categorie"], gegevens["bedrag_cent"], gegevens["frequentie"],
-            gegevens["afschrijfdag"], gegevens["rekening"], gegevens["contract_eind"],
+            gegevens["afschrijfdag"], gegevens["referentie"], gegevens["rekening"], gegevens["contract_eind"],
             gegevens["opzegtermijn_dagen"], gegevens["automatisch"], gegevens["notitie"],
             gegevens["link"], last_id,
         ),
@@ -1931,6 +2139,19 @@ def werk_last_bij(conn, last_id, gegevens, gekoppeld):
 def last_kaart(rij):
     item = dict(rij)
     item["per"] = FREQUENTIE_PER.get(item["frequentie"], "")
+    volgende = volgende_afschrijving(item.get("referentie"), item["frequentie"])
+    if volgende:
+        item["wanneer"] = "volgende " + datum_nl(volgende)
+        item["hint"] = ""
+    elif weekritme(item["frequentie"]) and not item.get("referentie"):
+        item["wanneer"] = ""
+        item["hint"] = "Vul een datum bij Vanaf in voor de volgende afschrijving."
+    elif not weekritme(item["frequentie"]) and item["afschrijfdag"]:
+        item["wanneer"] = f"dag {item['afschrijfdag']}"
+        item["hint"] = ""
+    else:
+        item["wanneer"] = ""
+        item["hint"] = ""
     item["gekoppeld"] = item["verzekering_id"] is not None
     item["link_ok"] = toon_link(item["link"])
     if item["gekoppeld"]:
@@ -1945,16 +2166,19 @@ def index():
     conn = verbind()
     lasten_rijen = [dict(rij) for rij in conn.execute("SELECT * FROM vaste_lasten")]
     maand, jaar = totalen(lasten_rijen)
-    netto_rij = conn.execute(
-        "SELECT COALESCE(SUM(netto_cent), 0), COUNT(netto_cent) FROM inkomens"
-    ).fetchone()
+    netto_rijen = conn.execute("SELECT netto_cent, frequentie FROM inkomens").fetchall()
+    netto_waarden = [
+        inkomen_per_maand(rij["netto_cent"], rij["frequentie"])
+        for rij in netto_rijen
+        if rij["netto_cent"] is not None
+    ]
     context = {
         "maand": maand,
         "jaar": jaar,
         "aantal_lasten": len(lasten_rijen),
         "agenda_items": agenda(conn),
         "opzeggen": opzeg_lijst(conn),
-        "netto": netto_rij[0] if netto_rij[1] else None,
+        "netto": sum(netto_waarden) if netto_waarden else None,
         "via_opties": optie_wachtwoord_actief(),
         "minimum": WACHTWOORD_MINIMUM,
     }
@@ -2005,6 +2229,7 @@ def last_bewerk(last_id):
             ruw["categorie"] = rij["categorie"]
             ruw["bedrag"] = format_bedrag(rij["bedrag_cent"])
             ruw["frequentie"] = rij["frequentie"]
+            ruw["volgende"] = volgende_afschrijving(ruw.get("referentie"), rij["frequentie"])
         if fouten:
             extra = koppel_extra(conn, "last", last_id)
             conn.close()
@@ -2541,7 +2766,10 @@ def bezit_weg(bezit_id):
 
 
 def leeg_inkomen():
-    return {"werkgever": "", "uren": "", "netto": "", "betaaldag": "", "notitie": ""}
+    return {
+        "werkgever": "", "uren": "", "netto": "", "betaaldag": "",
+        "soort": "loon", "toeslag": "", "frequentie": "maand", "notitie": "",
+    }
 
 
 def inkomen_formulier(rij):
@@ -2550,6 +2778,9 @@ def inkomen_formulier(rij):
         "uren": format_uren(rij["uren"]),
         "netto": format_bedrag(rij["netto_cent"]),
         "betaaldag": "" if rij["betaaldag"] is None else str(rij["betaaldag"]),
+        "soort": rij["soort"] or "loon",
+        "toeslag": rij["toeslag"] or "",
+        "frequentie": rij["frequentie"] or "maand",
         "notitie": rij["notitie"],
     }
 
@@ -2561,16 +2792,29 @@ def lees_inkomen():
         "uren": request.form.get("uren", ""),
         "netto": request.form.get("netto", ""),
         "betaaldag": request.form.get("betaaldag", ""),
+        "soort": request.form.get("soort", ""),
+        "toeslag": request.form.get("toeslag", ""),
+        "frequentie": request.form.get("frequentie", ""),
         "notitie": request.form.get("notitie", ""),
     }
+    soort = keuze(ruw["soort"] or "loon", [code for code, _ in INKOMEN_SOORTEN], "soort", fouten)
+    toeslag = keuze(ruw["toeslag"], [code for code, _ in TOESLAGEN], "toeslag", fouten, verplicht=False)
+    frequentie = keuze(
+        ruw["frequentie"] or "maand", list(MAAL_PER_JAAR), "frequentie", fouten,
+    )
     werkgever = tekst(ruw["werkgever"], 160)
+    if soort == "toeslag" and not werkgever:
+        werkgever = bijschrift(TOESLAGEN, toeslag) or "Toeslag"
     if not werkgever:
-        fouten.append("Vul de werkgever in.")
+        fouten.append("Vul een naam in.")
     gegevens = {
         "werkgever": werkgever,
         "uren": naar_uren(ruw["uren"], fouten),
-        "netto_cent": naar_centen(ruw["netto"], "Netto per maand", fouten, leeg_is_nul=False),
+        "netto_cent": naar_centen(ruw["netto"], "Bedrag", fouten, leeg_is_nul=False),
         "betaaldag": heel_getal(ruw["betaaldag"], "Betaaldag", fouten, 1, 31),
+        "soort": soort or "loon",
+        "toeslag": toeslag if soort == "toeslag" else "",
+        "frequentie": frequentie or "maand",
         "notitie": tekst(ruw["notitie"], 4000),
     }
     return gegevens, ruw, fouten
@@ -2579,36 +2823,72 @@ def lees_inkomen():
 def schrijf_inkomen(conn, gegevens, inkomen_id=None):
     kolommen = (
         gegevens["werkgever"], gegevens["uren"], gegevens["netto_cent"],
-        gegevens["betaaldag"], gegevens["notitie"],
+        gegevens["betaaldag"], gegevens["soort"], gegevens["toeslag"],
+        gegevens["frequentie"], gegevens["notitie"],
     )
     if inkomen_id is None:
         return conn.execute(
-            """INSERT INTO inkomens (werkgever, uren, netto_cent, betaaldag, notitie, aangemaakt)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO inkomens
+               (werkgever, uren, netto_cent, betaaldag, soort, toeslag, frequentie, notitie, aangemaakt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (*kolommen, vandaag().isoformat()),
         ).lastrowid
     conn.execute(
-        """UPDATE inkomens SET werkgever=?, uren=?, netto_cent=?, betaaldag=?, notitie=? WHERE id=?""",
+        """UPDATE inkomens
+           SET werkgever=?, uren=?, netto_cent=?, betaaldag=?, soort=?, toeslag=?, frequentie=?, notitie=?
+           WHERE id=?""",
         (*kolommen, inkomen_id),
     )
     return inkomen_id
+
+
+def groepeer_inkomen(items):
+    bak = {}
+    volgorde = []
+    for item in items:
+        code = item.get("soort") or "loon"
+        if code not in bak:
+            volgorde.append(code)
+            bak[code] = []
+        bak[code].append(item)
+    voorkeur = [code for code, _ in INKOMEN_SOORTEN]
+    volgorde.sort(key=lambda code: voorkeur.index(code) if code in voorkeur else len(voorkeur))
+    groepen = []
+    for code in volgorde:
+        leden = bak[code]
+        maand = sum(
+            inkomen_per_maand(lid["netto_cent"], lid.get("frequentie"))
+            for lid in leden
+            if lid["netto_cent"] is not None
+        )
+        groepen.append({
+            "code": code,
+            "naam": bijschrift(INKOMEN_SOORTEN, code),
+            "maand": maand,
+            "items": leden,
+        })
+    return groepen
 
 
 @app.route("/inkomen")
 def inkomen():
     conn = verbind()
     items = []
-    for rij in conn.execute("SELECT * FROM inkomens ORDER BY werkgever"):
+    for rij in conn.execute("SELECT * FROM inkomens ORDER BY soort, werkgever"):
         item = dict(rij)
+        item["per"] = FREQUENTIE_PER.get(item.get("frequentie") or "maand", "")
+        item["toeslag_label"] = bijschrift(TOESLAGEN, item.get("toeslag")) if item.get("toeslag") else ""
         item["vraag"] = f"{item['werkgever']} weghalen?"
         items.append(item)
     hang_chips(conn, items, "inkomen")
-    netto_waarden = [item["netto_cent"] for item in items if item["netto_cent"] is not None]
+    groepen = groepeer_inkomen(items)
+    heeft_bedrag = any(item["netto_cent"] is not None for item in items)
+    netto = sum(groep["maand"] for groep in groepen) if heeft_bedrag else None
     uren = sum(item["uren"] or 0 for item in items)
     conn.close()
     return pagina(
-        "inkomen.html", "inkomen", items=items,
-        netto=sum(netto_waarden) if netto_waarden else None,
+        "inkomen.html", "inkomen", items=items, groepen=groepen,
+        netto=netto,
         uren=uren if uren else None,
     )
 
@@ -2618,7 +2898,7 @@ def inkomen_nieuw():
     if request.method == "POST":
         gegevens, ruw, fouten = lees_inkomen()
         if fouten:
-            return weiger("inkomen_form.html", "inkomen", fouten, titel="Nieuwe werkgever",
+            return weiger("inkomen_form.html", "inkomen", fouten, titel="Nieuw inkomen",
                           waarden=ruw, **koppel_leeg("inkomen"))
         conn = verbind()
         inkomen_id = schrijf_inkomen(conn, gegevens)
@@ -2626,7 +2906,7 @@ def inkomen_nieuw():
         conn.close()
         melding("Opgeslagen.")
         return redirect(url_for("inkomen_bewerk", inkomen_id=inkomen_id))
-    return pagina("inkomen_form.html", "inkomen", titel="Nieuwe werkgever",
+    return pagina("inkomen_form.html", "inkomen", titel="Nieuw inkomen",
                   waarden=leeg_inkomen(), **koppel_leeg("inkomen"))
 
 
@@ -2642,7 +2922,7 @@ def inkomen_bewerk(inkomen_id):
         if fouten:
             extra = koppel_extra(conn, "inkomen", inkomen_id)
             conn.close()
-            return weiger("inkomen_form.html", "inkomen", fouten, titel="Werkgever", waarden=ruw, **extra)
+            return weiger("inkomen_form.html", "inkomen", fouten, titel="Inkomen", waarden=ruw, **extra)
         schrijf_inkomen(conn, gegevens, inkomen_id)
         conn.commit()
         conn.close()
@@ -2651,7 +2931,7 @@ def inkomen_bewerk(inkomen_id):
     waarden = inkomen_formulier(rij)
     extra = koppel_extra(conn, "inkomen", inkomen_id)
     conn.close()
-    return pagina("inkomen_form.html", "inkomen", titel="Werkgever", waarden=waarden, **extra)
+    return pagina("inkomen_form.html", "inkomen", titel="Inkomen", waarden=waarden, **extra)
 
 
 @app.route("/inkomen/<int:inkomen_id>/verwijder", methods=["POST"])
@@ -3171,37 +3451,58 @@ def _nginx_quotatie(pad):
     return '"' + pad.replace("\\", "/").replace('"', "") + '"'
 
 
-def start_nginx(poort, intern, cert, sleutel):
-    """TLS eindigt in nginx. Waitress ziet alleen http op localhost."""
-    log = logging.getLogger(__name__)
-    if not shutil_which("nginx"):
-        log.error("nginx ontbreekt in de container. Https kan niet starten.")
-        sys.exit(1)
-    tmp = tempfile.gettempdir()
-    os.makedirs(os.path.join(tmp, "nginx-client"), exist_ok=True)
-    os.makedirs(os.path.join(tmp, "nginx-proxy"), exist_ok=True)
-    config_pad = os.path.join(DATA_DIR, "nginx.conf")
-    pid = os.path.join(DATA_DIR, "nginx.pid")
-    config = "\n".join([
+def nginx_werkmap():
+    """Config en pid staan buiten /data, zodat een back-up ze niet meeneemt."""
+    return os.path.join(tempfile.gettempdir(), "mijn-overzicht-nginx")
+
+
+def nginx_gebruiker():
+    try:
+        return pwd.getpwnam("nginx")
+    except KeyError:
+        return None
+
+
+def bouw_nginx_config(poort, intern, cert, sleutel, pid, werkmap, foutlog="stderr"):
+    pagina_413 = (
+        "<!DOCTYPE html><html lang=\"nl\"><head><meta charset=\"utf-8\">"
+        "<title>Te groot</title></head><body><p>Dat is te veel in een keer.</p></body></html>"
+    )
+    return "\n".join([
         "worker_processes 1;",
-        "error_log /dev/stderr warn;",
+        f"error_log {foutlog} warn;",
         f"pid {pid};",
         "events { worker_connections 256; }",
         "http {",
+        "    server_tokens off;",
         "    access_log off;",
         "    client_max_body_size 32m;",
-        f"    client_body_temp_path {tmp}/nginx-client;",
-        f"    proxy_temp_path {tmp}/nginx-proxy;",
+        "    charset utf-8;",
+        f"    client_body_temp_path {werkmap}/client;",
+        f"    proxy_temp_path {werkmap}/proxy;",
         "    server {",
         f"        listen {poort} ssl;",
         "        server_name _;",
         f"        ssl_certificate {_nginx_quotatie(cert)};",
         f"        ssl_certificate_key {_nginx_quotatie(sleutel)};",
         "        ssl_protocols TLSv1.2 TLSv1.3;",
+        "        error_page 413 @te_groot;",
+        "        location @te_groot {",
+        "            internal;",
+        "            default_type text/html;",
+        '            add_header X-Content-Type-Options "nosniff" always;',
+        '            add_header Referrer-Policy "same-origin" always;',
+        '            add_header X-Frame-Options "DENY" always;',
+        '            add_header Content-Security-Policy "default-src \'none\'; frame-ancestors \'none\'" always;',
+        '            add_header Cache-Control "no-store" always;',
+        f'            add_header Strict-Transport-Security "max-age={HSTS_SECONDEN}" always;',
+        f"            return 413 '{pagina_413}';",
+        "        }",
         "        location / {",
         f"            proxy_pass http://127.0.0.1:{intern};",
         "            proxy_http_version 1.1;",
         "            proxy_set_header Host $host;",
+        "            proxy_set_header X-Real-IP $remote_addr;",
         "            proxy_set_header X-Forwarded-For $remote_addr;",
         "            proxy_set_header X-Forwarded-Proto https;",
         "            proxy_read_timeout 120s;",
@@ -3211,23 +3512,141 @@ def start_nginx(poort, intern, cert, sleutel):
         "}",
         "",
     ])
-    with open(config_pad, "w", encoding="utf-8") as bestand:
-        bestand.write(config)
-    test = subprocess.run(["nginx", "-t", "-c", config_pad], capture_output=True, text=True)
-    if test.returncode != 0:
-        log.error("nginx kan niet starten: %s", (test.stderr or test.stdout or "").strip())
-        sys.exit(1)
-    proc = subprocess.Popen(["nginx", "-c", config_pad, "-g", "daemon off;"])
 
-    def stop():
-        if proc.poll() is None:
-            proc.terminate()
+
+def _kopieer_geheim(bron, doel, uid, gid):
+    with open(bron, "rb") as bestand:
+        data = bestand.read()
+    fd = os.open(doel, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, data)
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+
+
+def _volg_nginx_stderr(stroom):
+    """Nginx schrijft naar de pipe. /dev/stderr mag hij als gebruiker niet openen."""
+    if stroom is None:
+        return
+    try:
+        for regel in iter(stroom.readline, b""):
+            sys.stderr.buffer.write(regel)
+            sys.stderr.buffer.flush()
+    except Exception:
+        return
+
+
+def _nginx_groep(proc, signaal):
+    pid = getattr(proc, "pid", None)
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    try:
+        os.killpg(pid, signaal)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+
+
+def _ruim_nginx_bestanden(pid):
+    werkmap = nginx_werkmap()
+    paden = [pid, os.path.join(werkmap, "cert.pem"), os.path.join(werkmap, "key.pem")]
+    for pad in paden:
+        if not pad:
+            continue
+        try:
+            os.remove(pad)
+        except OSError:
+            pass
+
+
+def bewaak_nginx(proc, afsluiten, pid, stop=os._exit):
+    code = proc.wait()
+    if afsluiten.is_set():
+        return
+    logging.getLogger(__name__).error(
+        "nginx is gestopt (code %s). De add-on stopt zodat hij opnieuw kan starten.",
+        code,
+    )
+    _nginx_groep(proc, signal.SIGTERM)
+    _ruim_nginx_bestanden(pid)
+    stop(1)
+
+
+def stop_nginx(proc, afsluiten, pid):
+    afsluiten.set()
+    if proc.poll() is None:
+        _nginx_groep(proc, signal.SIGTERM)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _nginx_groep(proc, signal.SIGKILL)
+            try:
+                proc.kill()
+            except OSError:
+                pass
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                pass
+    else:
+        _nginx_groep(proc, signal.SIGTERM)
+    _ruim_nginx_bestanden(pid)
 
-    atexit.register(stop)
+
+def start_nginx(poort, intern, cert, sleutel):
+    """TLS eindigt in nginx. Waitress ziet alleen http op localhost."""
+    log = logging.getLogger(__name__)
+    if not shutil_which("nginx"):
+        log.error("nginx ontbreekt in de container. Https kan niet starten.")
+        sys.exit(1)
+    gebruiker = nginx_gebruiker()
+    if gebruiker is None:
+        log.error("De gebruiker nginx ontbreekt. Https kan niet starten.")
+        sys.exit(1)
+    werkmap = nginx_werkmap()
+    os.makedirs(os.path.join(werkmap, "client"), mode=0o700, exist_ok=True)
+    os.makedirs(os.path.join(werkmap, "proxy"), mode=0o700, exist_ok=True)
+    for mapnaam in (werkmap, os.path.join(werkmap, "client"), os.path.join(werkmap, "proxy")):
+        os.chown(mapnaam, gebruiker.pw_uid, gebruiker.pw_gid)
+        os.chmod(mapnaam, 0o700)
+    cert_kopie = os.path.join(werkmap, "cert.pem")
+    sleutel_kopie = os.path.join(werkmap, "key.pem")
+    _kopieer_geheim(cert, cert_kopie, gebruiker.pw_uid, gebruiker.pw_gid)
+    _kopieer_geheim(sleutel, sleutel_kopie, gebruiker.pw_uid, gebruiker.pw_gid)
+    pid = os.path.join(werkmap, "nginx.pid")
+    config_pad = os.path.join(werkmap, "nginx.conf")
+    config = bouw_nginx_config(poort, intern, cert_kopie, sleutel_kopie, pid, werkmap)
+    fd = os.open(config_pad, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, config.encode("utf-8"))
+        os.fchown(fd, gebruiker.pw_uid, gebruiker.pw_gid)
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+    test = subprocess.run(
+        ["nginx", "-t", "-c", config_pad],
+        capture_output=True,
+        text=True,
+        user=gebruiker.pw_uid,
+        group=gebruiker.pw_gid,
+    )
+    if test.returncode != 0:
+        log.error("nginx kan niet starten: %s", (test.stderr or test.stdout or "").strip())
+        _ruim_nginx_bestanden(pid)
+        sys.exit(1)
+    # Eigen proces, geen preexec_fn: dat deadlockt zodra de app threads heeft.
+    # Het hulpprogramma zet PR_SET_PDEATHSIG en start daarna nginx. SIGKILL van
+    # Python stuurt nginx dan SIGTERM, ook al zit nginx in een eigen sessie.
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sterf_met_ouder.py")
+    proc = subprocess.Popen(
+        [sys.executable, helper, "nginx", "-c", config_pad, "-g", "daemon off;"],
+        user=gebruiker.pw_uid,
+        group=gebruiker.pw_gid,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    threading.Thread(target=_volg_nginx_stderr, args=(proc.stderr,), name="nginx-log", daemon=True).start()
     deadline = time.time() + 5
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -3235,11 +3654,13 @@ def start_nginx(poort, intern, cert, sleutel):
             sys.exit(1)
         try:
             with socket.create_connection(("127.0.0.1", poort), timeout=0.2):
-                return
+                if os.path.exists(pid):
+                    os.chmod(pid, 0o600)
+                return proc, pid
         except OSError:
             time.sleep(0.05)
     log.error("nginx luistert niet op poort %s.", poort)
-    stop()
+    proc.terminate()
     sys.exit(1)
 
 
@@ -3251,33 +3672,83 @@ def shutil_which(naam):
     return None
 
 
+def vraag_stop(netjes, signum):
+    """Zet de vlag vóór SystemExit. Waitress vangt die exit in server.run()."""
+    logging.getLogger(__name__).info("Stopverzoek ontvangen (%s). De add-on stopt.", signum)
+    netjes.set()
+    raise SystemExit(0)
+
+
+def afsluitcode(netjes):
+    log = logging.getLogger(__name__)
+    if netjes.is_set():
+        log.info("De add-on is gestopt.")
+        return 0
+    log.error("De webserver is gestopt. De add-on stopt zodat hij opnieuw kan starten.")
+    return 1
+
+
 def start_server(poort):
     log = logging.getLogger(__name__)
     # Waitress meldt anders het interne adres. De regel hieronder is de URL voor de browser.
     logging.getLogger("waitress").setLevel(logging.WARNING)
+    netjes = threading.Event()
     if HTTPS_ACTIEF:
         if maak_ssl_context() is None:
             sys.exit(1)
         cert, sleutel = ssl_paden()
         intern = INTERN_POORT if poort != INTERN_POORT else INTERN_POORT + 1
-        start_nginx(poort, intern, cert, sleutel)
+        proc, pid = start_nginx(poort, intern, cert, sleutel)
+        afsluiten = threading.Event()
+        threading.Thread(
+            target=bewaak_nginx,
+            args=(proc, afsluiten, pid),
+            name="nginx-bewaker",
+            daemon=True,
+        ).start()
+
+        def bij_stop(signum, frame):
+            stop_nginx(proc, afsluiten, pid)
+            vraag_stop(netjes, signum)
+
+        signal.signal(signal.SIGTERM, bij_stop)
+        signal.signal(signal.SIGINT, bij_stop)
+        atexit.register(lambda: stop_nginx(proc, afsluiten, pid))
         log.info("Mijn Overzicht %s is bereikbaar op https://0.0.0.0:%s", VERSIE, poort)
         from waitress import serve
 
-        serve(app, host="127.0.0.1", port=intern, threads=8, url_scheme="https")
-        return
+        try:
+            serve(app, host="127.0.0.1", port=intern, **WAITRESS_HTTPS)
+        except SystemExit:
+            netjes.set()
+        finally:
+            stop_nginx(proc, afsluiten, pid)
+        sys.exit(afsluitcode(netjes))
     log.warning(
         "ssl staat uit. Het verkeer op poort %s is onversleuteld http. "
         "Zet deze poort niet open naar internet; gebruik het eigen netwerk, een VPN, of zet ssl aan.",
         poort,
     )
+
+    def bij_stop(signum, frame):
+        vraag_stop(netjes, signum)
+
+    signal.signal(signal.SIGTERM, bij_stop)
+    signal.signal(signal.SIGINT, bij_stop)
     log.info("Mijn Overzicht %s is bereikbaar op http://0.0.0.0:%s", VERSIE, poort)
     try:
         from waitress import serve
 
-        serve(app, host="0.0.0.0", port=poort, threads=4)
+        try:
+            serve(app, host="0.0.0.0", port=poort, threads=4)
+        except SystemExit:
+            netjes.set()
     except ImportError:
-        app.run(host="0.0.0.0", port=poort)
+        try:
+            app.run(host="0.0.0.0", port=poort)
+        except SystemExit:
+            netjes.set()
+    sys.exit(afsluitcode(netjes))
 
 
 if __name__ == "__main__":
