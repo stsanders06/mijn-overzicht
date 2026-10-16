@@ -1,8 +1,20 @@
 # Changelog
 
+## 0.1.3
+
+- In 0.1.2 schreef nginx het bezoekersadres wel in `X-Forwarded-For`, maar waitress haalde die kop weg vóór de app. Daardoor deelden alle bezoekers op https één teller. In ssl-modus vertrouwt waitress alleen `X-Forwarded-For` van 127.0.0.1, één hop, en niet `X-Forwarded-Proto`. Op gewoon http blijft een meegestuurde kop genegeerd.
+- Te veel foute pogingen in 30 seconden vertragen de controle kort, tot 2 seconden, voor iedereen. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit, lukt daarna alsnog. Een adres dat in zijn pauze zit, wordt niet meer uit de lijst gezet als die vol raakt.
+- Stopt Python met TERM of INT, dan stopt de add-on netjes met code 0. Nginx zit in een eigen processgroep en wordt mee gestopt, ook de werkprocessen. Certificaatkopieën gaan bij het stoppen weg. Nginx-fouten gaan naar stderr.
+- Vanaf is zichtbaar zonder JavaScript. Bij een weekritme zonder die datum staat er een hint. “Binnenkort” zegt 60 dagen. Pauzes rekenen in UTC.
+- Een kaart in een lijst opent het item. Koppelingen, telefoon, mail en de website blijven hun eigen link. Weghalen staat los van de kaart erboven.
+- Koppen van een categorie staan direct boven de kaarten van die categorie.
+- Inkomen kan een toeslag zijn (zorg, huur, kinderopvang, kindgebonden budget, kinderbijslag of anders), met hetzelfde bedrag, dezelfde frequentie en dezelfde betaaldag. Oude rijen blijven loon per maand.
+- Het menu Meer schuift en vervaagt open vanaf de knop, ongeveer 200 ms. Bij minder beweging gebeurt dat niet.
+- De onderste balk schuift niet meer over de inhoud. De pagina houdt ruimte over voor die balk en voor de thuisindicator. Marges en tussenruimte gebruiken dezelfde stappen, zodat knoppen en koppen niet tegen de tekst of de rand plakken.
+
 ## 0.1.2
 
-- Achter nginx telt het echte bezoekersadres, niet 127.0.0.1. Op gewoon http wordt een meegestuurde X-Forwarded-For genegeerd.
+- Nginx overschrijft `X-Forwarded-For` met het adres van de verbinding. Op gewoon http wordt een meegestuurde kop genegeerd.
 - Elke foute inlogpoging telt voor dat adres, ook als er al vanaf andere adressen is geprobeerd. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit, werkt meteen.
 - Stopt nginx of de webserver, dan stopt de add-on en kan Home Assistant hem opnieuw starten.
 - Nginx draait zonder root, verbergt zijn versie, en een te groot verzoek krijgt een eigen pagina.

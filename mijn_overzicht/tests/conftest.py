@@ -7,6 +7,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import time
 
 import pytest
 
@@ -45,11 +46,20 @@ def _wis_setup():
 
 def _reset_pogingen():
     overzicht.POGINGEN_IP.clear()
-    overzicht.POGINGEN_ACCOUNT = (0, None)
+    overzicht.MISLUKKINGEN.clear()
 
 
 @pytest.fixture
-def app():
+def app(monkeypatch):
+    slaap = []
+    echte_slaap = time.sleep
+
+    def nep_slaap(seconden):
+        slaap.append(seconden)
+        echte_slaap(0)
+
+    monkeypatch.setattr(overzicht.time, "sleep", nep_slaap)
+    overzicht.app.config["TEST_SLAAP"] = slaap
     overzicht.app.config["TESTING"] = True
     overzicht.HTTPS_ACTIEF = False
     overzicht.app.config["SESSION_COOKIE_SECURE"] = False

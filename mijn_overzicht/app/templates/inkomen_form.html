@@ -9,20 +9,52 @@
 </header>
 <form class="kaart" method="post">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <label for="werkgever">Werkgever</label>
-  <input id="werkgever" name="werkgever" value="{{ waarden.werkgever }}" required>
+  <div class="twee">
+    <div>
+      <label for="soort">Soort</label>
+      <select id="soort" name="soort">
+        {% for code, label in INKOMEN_SOORTEN %}
+        <option value="{{ code }}"{% if waarden.soort == code %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="toeslag">Toeslag</label>
+      <select id="toeslag" name="toeslag">
+        <option value="">—</option>
+        {% for code, label in TOESLAGEN %}
+        <option value="{{ code }}"{% if waarden.toeslag == code %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <p class="stil">Bij een toeslag mag de naam leeg blijven. Dan gebruikt de app de gekozen toeslag.</p>
+  <label for="werkgever">Naam</label>
+  <input id="werkgever" name="werkgever" value="{{ waarden.werkgever }}">
+  <div class="twee">
+    <div>
+      <label for="frequentie">Frequentie</label>
+      <select id="frequentie" name="frequentie">
+        {% for code, label in LAST_FREQUENTIES %}
+        <option value="{{ code }}"{% if waarden.frequentie == code %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="netto">Bedrag</label>
+      <input id="netto" name="netto" inputmode="decimal" value="{{ waarden.netto }}">
+    </div>
+  </div>
   <div class="twee">
     <div>
       <label for="uren">Contracturen</label>
       <input id="uren" name="uren" inputmode="decimal" value="{{ waarden.uren }}">
     </div>
     <div>
-      <label for="netto">Netto per maand</label>
-      <input id="netto" name="netto" inputmode="decimal" value="{{ waarden.netto }}">
+      <label for="betaaldag">Betaaldag</label>
+      <input id="betaaldag" name="betaaldag" inputmode="numeric" value="{{ waarden.betaaldag }}">
     </div>
   </div>
-  <label for="betaaldag">Betaaldag</label>
-  <input id="betaaldag" name="betaaldag" inputmode="numeric" value="{{ waarden.betaaldag }}">
   <label for="notitie">Notitie</label>
   <textarea id="notitie" name="notitie">{{ waarden.notitie }}</textarea>
   <p class="acties"><button class="knop" type="submit">Opslaan</button></p>
@@ -30,7 +62,7 @@
 {% if koppel_id %}
 <form method="post" action="{{ url_for('inkomen_weg', inkomen_id=koppel_id) }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <button class="knop gevaar" type="submit" data-bevestig="Deze werkgever weghalen?">Weghalen</button>
+  <button class="knop gevaar" type="submit" data-bevestig="Dit inkomen weghalen?">Weghalen</button>
 </form>
 {% endif %}
 {% include "_gekoppeld.html" %}

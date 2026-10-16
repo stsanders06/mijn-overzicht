@@ -1,8 +1,12 @@
 """Inlog, eerste keer, CSRF, sessies en het wachtwoord uit de add-on."""
 import json
+import logging
 import os
 import pathlib
+import signal
 import threading
+
+import pytest
 
 from conftest import TEST_HASH, TEST_WACHTWOORD
 import main as overzicht
@@ -166,7 +170,7 @@ def test_vijf_fouten_zetten_een_pauze(uitgelogde_client, monkeypatch):
     monkeypatch.setattr(overzicht, "nu", lambda: vast)
     for _ in range(5):
         uitgelogde_client.post("/inloggen", data={"csrf_token": "test-token", "wachtwoord": "fout"})
-    assert overzicht.POGINGEN_ACCOUNT[0] == 3
+    assert overzicht.globale_aantal() == 3
     pagina = uitgelogde_client.get("/inloggen").get_data(as_text=True)
     assert "Wacht" in pagina
     assert "seconden" in pagina
@@ -183,18 +187,17 @@ def test_pauze_is_exponentieel_en_begrensd():
     assert overzicht.pauze_seconden(12, moment, 8) == 8
 
 
-def test_pauze_per_ip_en_account_blokkeert_geen_juist_wachtwoord(app):
+def test_pauze_per_ip_blokkeert_geen_juist_wachtwoord(app):
     moment = overzicht.nu()
     overzicht.POGINGEN_IP["203.0.113.9"] = (12, moment)
-    overzicht.POGINGEN_ACCOUNT = (0, None)
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "203.0.113.9"}):
         assert overzicht.wachttijd_over() == 60
         assert overzicht.ip_wachttijd() == 60
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "198.51.100.4"}):
         assert overzicht.wachttijd_over() == 0
-    overzicht.POGINGEN_ACCOUNT = (12, moment)
+    overzicht.MISLUKKINGEN.extend([moment] * overzicht.VENSTER_MAX)
+    assert overzicht.globale_vertraging() > 0
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "198.51.100.4"}):
-        assert overzicht.account_wachttijd() == 8
         assert overzicht.wachttijd_over() == 0
 
 
@@ -240,6 +243,32 @@ def test_pogingen_per_ip_blijven_begrensd(app):
     assert "203.0.113.50" in overzicht.POGINGEN_IP
 
 
+def test_vergrendeld_adres_blijft_staan(app):
+    moment = overzicht.nu()
+    overzicht.POGINGEN_IP.clear()
+    overzicht.POGINGEN_IP["203.0.113.9"] = (12, moment)
+    for n in range(overzicht.POGINGEN_IP_MAX + 10):
+        overzicht.POGINGEN_IP[f"198.51.{n // 250}.{n % 250}"] = (1, moment)
+    with app.test_request_context(environ_overrides={"REMOTE_ADDR": "203.0.113.50"}):
+        overzicht.noteer_mislukking()
+    assert overzicht.POGINGEN_IP["203.0.113.9"] == (12, moment)
+    assert "203.0.113.50" in overzicht.POGINGEN_IP
+    assert len(overzicht.POGINGEN_IP) <= overzicht.POGINGEN_IP_MAX
+
+
+def test_vol_venster_vertraagt_maar_juist_wachtwoord_lukt(app, monkeypatch):
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    for n in range(overzicht.VENSTER_MAX):
+        antwoord = _inlog_vanaf(app, f"203.0.113.{n + 1}", "fout")
+        assert "/inloggen" in antwoord.headers["Location"]
+    assert 0 < overzicht.globale_vertraging() <= 2
+    gelukt = _inlog_vanaf(app, "198.51.100.20", TEST_WACHTWOORD)
+    assert gelukt.headers["Location"].endswith("/")
+    assert overzicht.app.config["TEST_SLAAP"]
+    assert max(overzicht.app.config["TEST_SLAAP"]) <= 2
+
+
 def test_instelcode_staat_altijd_op_stdout(zonder_account, capsys):
     code = overzicht.zorg_setup_code()
     assert code in capsys.readouterr().out
@@ -271,7 +300,7 @@ def test_elke_foute_poging_telt_ook_bij_draaiende_adressen(app, monkeypatch):
             assert "/inloggen" in antwoord.headers["Location"]
     for ip in adressen:
         assert overzicht.POGINGEN_IP[ip][0] == 3
-    assert overzicht.POGINGEN_ACCOUNT[0] == len(adressen) * 3
+    assert overzicht.globale_aantal() == len(adressen) * 3
     goed = _inlog_vanaf(app, "198.51.100.77", TEST_WACHTWOORD)
     assert goed.headers["Location"].endswith("/")
 
@@ -319,6 +348,7 @@ def test_https_gebruikt_het_adres_van_nginx_alleen_vanaf_localhost(app, monkeypa
 def test_nginx_config_overschrijft_het_adres_en_geeft_413(app):
     tekst = overzicht.bouw_nginx_config(8320, 18080, "/tmp/cert.pem", "/tmp/key.pem", "/tmp/nginx.pid", "/tmp/nginx")
     assert "proxy_set_header X-Forwarded-For $remote_addr;" in tekst
+    assert "error_log stderr warn;" in tekst
     assert "proxy_add_x_forwarded_for" not in tekst
     assert "server_tokens off;" in tekst
     assert "error_page 413 @te_groot;" in tekst
@@ -341,6 +371,36 @@ def test_gestopte_nginx_stopt_de_addon():
     gestopt.clear()
     overzicht.bewaak_nginx(Nep(), afsluiten, os.path.join(overzicht.DATA_DIR, "ontbreekt.pid"), stop=gestopt.append)
     assert gestopt == []
+
+
+def test_stop_nginx_raakt_de_groep_ook_als_de_master_al_weg_is(monkeypatch):
+    signalen = []
+    monkeypatch.setattr(overzicht.os, "killpg", lambda pid, sig: signalen.append((pid, sig)))
+
+    class Dood:
+        pid = 4242
+
+        def poll(self):
+            return 0
+
+    afsluiten = threading.Event()
+    overzicht.stop_nginx(Dood(), afsluiten, os.path.join(overzicht.DATA_DIR, "ontbreekt.pid"))
+    assert afsluiten.is_set()
+    assert (4242, signal.SIGTERM) in signalen
+
+
+def test_term_eindigt_met_code_0(caplog):
+    netjes = threading.Event()
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit) as einde:
+            overzicht.vraag_stop(netjes, signal.SIGTERM)
+        assert einde.value.code == 0
+        assert netjes.is_set()
+        assert overzicht.afsluitcode(netjes) == 0
+        assert overzicht.afsluitcode(threading.Event()) == 1
+    assert "Stopverzoek" in caplog.text
+    assert "De add-on is gestopt." in caplog.text
+    assert "De webserver is gestopt" in caplog.text
 
 
 def test_post_zonder_csrf_wordt_geweigerd(client):

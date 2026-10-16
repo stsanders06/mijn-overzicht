@@ -30,18 +30,3 @@ document.addEventListener("keydown", function (event) {
 document.addEventListener("pointerdown", sluit_meer_buiten);
 document.addEventListener("touchstart", sluit_meer_buiten, { passive: true });
 document.addEventListener("click", sluit_meer_buiten);
-function weekritme(code) {
-  return code === "week" || code === "twee_weken" || code === "vier_weken";
-}
-function toon_ritme() {
-  var select = document.getElementById("frequentie");
-  var dag = document.getElementById("afschrijfdag-veld");
-  var vanaf = document.getElementById("referentie-veld");
-  if (!select || !dag || !vanaf) return;
-  var week = weekritme(select.value);
-  dag.hidden = week;
-  vanaf.hidden = !week;
-}
-var frequentie = document.getElementById("frequentie");
-if (frequentie) frequentie.addEventListener("change", toon_ritme);
-toon_ritme();
