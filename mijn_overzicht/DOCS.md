@@ -7,7 +7,7 @@ Alles staat in `/data`:
 - `secret_key` — sessiesleutel, niet in de back-up
 - `options.json` — door de Supervisor geschreven; het wachtwoord wordt hieruit gelezen en niet gelogd
 
-Bedragen staan in centen. Een kwartaalbedrag telt vier keer per jaar, een jaarbedrag één keer. Het maandtotaal is het jaartotaal gedeeld door 12, afgerond op een cent.
+Bedragen staan in centen. Een kwartaalbedrag telt vier keer per jaar, een jaarbedrag één keer. Elke week telt 52 keer, elke 2 weken 26 keer en elke 4 weken 13 keer. Het maandtotaal is het jaartotaal gedeeld door 12, afgerond op een cent. Bij een wekelijks ritme hoort een datum in plaats van een afschrijfdag. De volgende afschrijving is steeds 7, 14 of 28 dagen later, gerekend in Europe/Amsterdam.
 
 Een verzekering met “premie meetellen” maakt of werkt één vaste last bij (`verzekering_id`, uniek). Het dashboard telt alleen vaste lasten, dus de premie komt één keer voor. Haal je die last weg, dan stopt het meetellen; de verzekering blijft.
 

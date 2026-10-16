@@ -4,7 +4,8 @@ import os
 import sqlite3
 import tempfile
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import main as overzicht
 
@@ -30,6 +31,78 @@ def test_totalen_rekenen_maand_kwartaal_en_jaar_omgerekend(post, client):
     tekst = client.get("/").get_data(as_text=True)
     assert "€ 14,17" in tekst
     assert "€ 170,00" in tekst
+
+
+def test_weekritmes_tellen_52_26_en_13_keer():
+    assert overzicht.per_jaar_cent(1000, "week") == 52 * 1000
+    assert overzicht.per_jaar_cent(1000, "twee_weken") == 26 * 1000
+    assert overzicht.per_jaar_cent(3295, "vier_weken") == 13 * 3295
+    assert overzicht.totalen([{"bedrag_cent": 3295, "frequentie": "vier_weken"}]) == (
+        (13 * 3295 + 6) // 12,
+        13 * 3295,
+    )
+    assert overzicht.totalen([{"bedrag_cent": 1000, "frequentie": "week"}])[0] == (52 * 1000 + 6) // 12
+    assert overzicht.totalen([{"bedrag_cent": 1000, "frequentie": "twee_weken"}])[0] == (26 * 1000 + 6) // 12
+    assert overzicht.volgende_afschrijving("2026-08-27", "maand", date(2026, 8, 28)) is None
+    assert overzicht.volgende_afschrijving("", "vier_weken", date(2026, 8, 28)) is None
+    assert overzicht.volgende_afschrijving(None, "week", date(2026, 8, 28)) is None
+
+
+def test_volgende_afschrijving_elke_vier_weken_in_amsterdam(monkeypatch):
+    assert str(overzicht.actieve_tijdzone()) == "Europe/Amsterdam"
+    peildatum = date(2026, 8, 27)
+    assert peildatum.weekday() == 3
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", peildatum) == peildatum
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", date(2026, 8, 28)) == date(2026, 9, 24)
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", date(2026, 9, 24)) == date(2026, 9, 24)
+    assert overzicht.volgende_afschrijving(peildatum, "vier_weken", date(2026, 9, 25)) == date(2026, 10, 22)
+    assert date(2026, 9, 24).weekday() == 3
+    assert date(2026, 10, 22).weekday() == 3
+    assert overzicht.volgende_afschrijving(peildatum, "week", date(2026, 8, 28)) == date(2026, 9, 3)
+    assert overzicht.volgende_afschrijving(peildatum, "twee_weken", date(2026, 8, 28)) == date(2026, 9, 10)
+    # 27 aug 2026 22:30 UTC is 28 aug 00:30 in Amsterdam. De volgende keer is dan 24 sep.
+    utc = datetime(2026, 8, 27, 22, 30, tzinfo=ZoneInfo("UTC"))
+    lokaal = utc.astimezone(overzicht.actieve_tijdzone()).replace(tzinfo=None)
+    assert lokaal.date() == date(2026, 8, 28)
+    monkeypatch.setattr(overzicht, "nu", lambda: lokaal)
+    assert overzicht.vandaag() == date(2026, 8, 28)
+    assert overzicht.volgende_afschrijving("2026-08-27", "vier_weken") == date(2026, 9, 24)
+
+
+def test_paynl_elke_vier_weken_op_dashboard(post, client, monkeypatch):
+    utc = datetime(2026, 8, 27, 22, 30, tzinfo=ZoneInfo("UTC"))
+    lokaal = utc.astimezone(overzicht.actieve_tijdzone()).replace(tzinfo=None)
+    monkeypatch.setattr(overzicht, "nu", lambda: lokaal)
+    post("/lasten/nieuw", data={
+        "naam": "Pay.nl", "categorie": "Abonnement", "bedrag": "32,95",
+        "frequentie": "vier_weken", "referentie": "2026-08-27", "afschrijfdag": "4",
+    })
+    dash = client.get("/").get_data(as_text=True)
+    assert "€ 35,70" in dash
+    assert "€ 428,35" in dash
+    assert "Afschrijving" in dash
+    assert "Pay.nl" in dash
+    assert "24 sep 2026" in dash
+    lijst = client.get("/lasten").get_data(as_text=True)
+    assert "per 4 weken" in lijst
+    assert "volgende 24 sep 2026" in lijst
+    assert "dag 4" not in lijst
+    formulier = client.get("/lasten/1").get_data(as_text=True)
+    assert 'value="2026-08-27"' in formulier
+    assert "Volgende afschrijving 24 sep 2026." in formulier
+    assert 'id="afschrijfdag-veld" hidden' in formulier
+    assert 'id="referentie-veld"' in formulier
+    assert "hidden" not in formulier.split('id="referentie-veld"', 1)[1].split(">", 1)[0]
+
+
+def test_verre_peildatum_blijft_van_binnenkort_af(post, client, monkeypatch):
+    monkeypatch.setattr(overzicht, "nu", lambda: datetime(2026, 8, 28, 0, 30))
+    post("/lasten/nieuw", data={
+        "naam": "Later", "categorie": "Overig", "bedrag": "1",
+        "frequentie": "week", "referentie": "2027-01-01",
+    })
+    assert "volgende 1 jan 2027" in client.get("/lasten").get_data(as_text=True)
+    assert "Later" not in client.get("/").get_data(as_text=True)
 
 
 def test_last_bewerken_en_weghalen(post, client):

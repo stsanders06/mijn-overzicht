@@ -73,14 +73,26 @@ MAX_BESTAND = 12 * 1024 * 1024
 MAX_VERZOEK = 32 * 1024 * 1024
 
 MAANDEN = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
-MAAL_PER_JAAR = {"maand": 12, "kwartaal": 4, "jaar": 1}
-FREQUENTIE_PER = {"maand": "per maand", "kwartaal": "per kwartaal", "jaar": "per jaar"}
+# Weken zijn 52 per jaar, niet 365/7. Daardoor is elke 4 weken precies 13 keer.
+MAAL_PER_JAAR = {
+    "week": 52, "twee_weken": 26, "vier_weken": 13,
+    "maand": 12, "kwartaal": 4, "jaar": 1,
+}
+INTERVAL_DAGEN = {"week": 7, "twee_weken": 14, "vier_weken": 28}
+FREQUENTIE_PER = {
+    "week": "per week", "twee_weken": "per 2 weken", "vier_weken": "per 4 weken",
+    "maand": "per maand", "kwartaal": "per kwartaal", "jaar": "per jaar",
+}
 
 LAST_CATEGORIEEN = [
     "Wonen", "Energie", "Water", "Telecom", "Verzekering", "Vervoer",
     "Abonnement", "Gemeente", "Overig",
 ]
 FREQUENTIES = [("maand", "Per maand"), ("kwartaal", "Per kwartaal"), ("jaar", "Per jaar")]
+LAST_FREQUENTIES = [
+    ("week", "Elke week"), ("twee_weken", "Elke 2 weken"), ("vier_weken", "Elke 4 weken"),
+    *FREQUENTIES,
+]
 VERZEKERING_SOORTEN = [
     ("zorg", "Zorg"), ("auto", "Auto"), ("motor", "Motor"), ("reis", "Reis"),
     ("inboedel", "Inboedel"), ("opstal", "Opstal"), ("aansprakelijkheid", "Aansprakelijkheid"),
@@ -336,6 +348,7 @@ def init_db():
             bedrag_cent INTEGER NOT NULL DEFAULT 0,
             frequentie TEXT NOT NULL DEFAULT 'maand',
             afschrijfdag INTEGER,
+            referentie TEXT,
             rekening TEXT NOT NULL DEFAULT '',
             contract_eind TEXT,
             opzegtermijn_dagen INTEGER,
@@ -439,6 +452,9 @@ def init_db():
     kolommen = {rij[1] for rij in conn.execute("PRAGMA table_info(account)")}
     if "sessie_versie" not in kolommen:
         conn.execute("ALTER TABLE account ADD COLUMN sessie_versie INTEGER NOT NULL DEFAULT 1")
+    last_kolommen = {rij[1] for rij in conn.execute("PRAGMA table_info(vaste_lasten)")}
+    if "referentie" not in last_kolommen:
+        conn.execute("ALTER TABLE vaste_lasten ADD COLUMN referentie TEXT")
     conn.commit()
     conn.close()
     if os.path.exists(DB_PATH):
@@ -697,6 +713,8 @@ app.jinja_env.globals["VOERTUIG_SOORTEN"] = VOERTUIG_SOORTEN
 app.jinja_env.globals["DATUM_SOORTEN"] = DATUM_SOORTEN
 app.jinja_env.globals["CONTACT_ROLLEN"] = CONTACT_ROLLEN
 app.jinja_env.globals["FREQUENTIES"] = FREQUENTIES
+app.jinja_env.globals["LAST_FREQUENTIES"] = LAST_FREQUENTIES
+app.jinja_env.globals["WEEK_RITMES"] = tuple(INTERVAL_DAGEN)
 app.jinja_env.globals["BLOEDGROEPEN"] = BLOEDGROEPEN
 
 
@@ -1166,6 +1184,36 @@ def per_jaar_cent(bedrag_cent, frequentie):
     return int(bedrag_cent or 0) * MAAL_PER_JAAR.get(frequentie, 0)
 
 
+def weekritme(frequentie):
+    return frequentie in INTERVAL_DAGEN
+
+
+def volgende_afschrijving(referentie, frequentie, op=None):
+    """Eerstvolgende afschrijving op of na op, in stappen vanaf de peildatum.
+
+    De stap is 7, 14 of 28 kalenderdagen. op is een datum in Europe/Amsterdam
+    (vandaag() als hij ontbreekt), zodat de grens niet op UTC valt.
+    """
+    dagen = INTERVAL_DAGEN.get(frequentie)
+    if not dagen or not referentie:
+        return None
+    op = op or vandaag()
+    if isinstance(referentie, datetime):
+        start = referentie.date()
+    elif isinstance(referentie, date):
+        start = referentie
+    else:
+        try:
+            start = date.fromisoformat(str(referentie)[:10])
+        except ValueError:
+            return None
+    if start >= op:
+        return start
+    verstreken = (op - start).days
+    stappen = (verstreken + dagen - 1) // dagen
+    return start + timedelta(days=stappen * dagen)
+
+
 def totalen(rijen):
     jaar = sum(per_jaar_cent(rij["bedrag_cent"], rij["frequentie"]) for rij in rijen)
     maand = (jaar + 6) // 12 if jaar else 0
@@ -1313,6 +1361,9 @@ def agenda(conn, op=None):
 
     for rij in conn.execute("SELECT * FROM vaste_lasten"):
         voeg(rij["contract_eind"], rij["naam"], "Contract", f"/lasten/{rij['id']}")
+        volgende = volgende_afschrijving(rij["referentie"], rij["frequentie"], op)
+        if volgende:
+            voeg(volgende.isoformat(), rij["naam"], "Afschrijving", f"/lasten/{rij['id']}")
     for rij in conn.execute("SELECT * FROM verzekeringen"):
         if rij["id"] in gekoppeld:
             continue
@@ -1853,7 +1904,8 @@ def zoek_items(conn, q):
 def leeg_last():
     return {
         "naam": "", "categorie": "Overig", "bedrag": "", "frequentie": "maand",
-        "afschrijfdag": "", "rekening": "", "contract_eind": "",
+        "afschrijfdag": "", "referentie": "", "volgende": None,
+        "rekening": "", "contract_eind": "",
         "opzegtermijn_dagen": "", "automatisch": False, "notitie": "", "link": "",
     }
 
@@ -1865,6 +1917,8 @@ def last_formulier(rij):
         "bedrag": format_bedrag(rij["bedrag_cent"]),
         "frequentie": rij["frequentie"],
         "afschrijfdag": "" if rij["afschrijfdag"] is None else str(rij["afschrijfdag"]),
+        "referentie": rij["referentie"] or "",
+        "volgende": volgende_afschrijving(rij["referentie"], rij["frequentie"]),
         "rekening": rij["rekening"],
         "contract_eind": rij["contract_eind"] or "",
         "opzegtermijn_dagen": "" if rij["opzegtermijn_dagen"] is None else str(rij["opzegtermijn_dagen"]),
@@ -1882,6 +1936,7 @@ def lees_last(gekoppeld):
         "bedrag": request.form.get("bedrag", ""),
         "frequentie": request.form.get("frequentie", ""),
         "afschrijfdag": request.form.get("afschrijfdag", ""),
+        "referentie": request.form.get("referentie", ""),
         "rekening": request.form.get("rekening", ""),
         "contract_eind": request.form.get("contract_eind", ""),
         "opzegtermijn_dagen": request.form.get("opzegtermijn_dagen", ""),
@@ -1897,6 +1952,7 @@ def lees_last(gekoppeld):
         "notitie": tekst(ruw["notitie"], 4000),
         "link": link_veld(ruw["link"], fouten),
         "afschrijfdag": heel_getal(ruw["afschrijfdag"], "Afschrijfdag", fouten, 1, 31),
+        "referentie": datum_veld(ruw["referentie"], "Vanaf", fouten),
     }
     if not gekoppeld:
         gegevens["naam"] = tekst(ruw["naam"], 200)
@@ -1905,19 +1961,20 @@ def lees_last(gekoppeld):
         gegevens["categorie"] = keuze(ruw["categorie"], LAST_CATEGORIEEN, "categorie", fouten)
         bedrag = naar_centen(ruw["bedrag"], "Bedrag", fouten, leeg_is_nul=True)
         gegevens["bedrag_cent"] = 0 if bedrag is None else bedrag
-        gegevens["frequentie"] = keuze(ruw["frequentie"], [code for code, _ in FREQUENTIES], "frequentie", fouten)
+        gegevens["frequentie"] = keuze(ruw["frequentie"], [code for code, _ in LAST_FREQUENTIES], "frequentie", fouten)
+    ruw["volgende"] = volgende_afschrijving(gegevens.get("referentie") or ruw.get("referentie"), ruw.get("frequentie"))
     return gegevens, ruw, fouten
 
 
 def voeg_last_in(conn, gegevens):
     return conn.execute(
         """INSERT INTO vaste_lasten
-           (naam, categorie, bedrag_cent, frequentie, afschrijfdag, rekening, contract_eind,
+           (naam, categorie, bedrag_cent, frequentie, afschrijfdag, referentie, rekening, contract_eind,
             opzegtermijn_dagen, automatisch, notitie, link, verzekering_id, aangemaakt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
         (
             gegevens["naam"], gegevens["categorie"], gegevens["bedrag_cent"], gegevens["frequentie"],
-            gegevens["afschrijfdag"], gegevens["rekening"], gegevens["contract_eind"],
+            gegevens["afschrijfdag"], gegevens["referentie"], gegevens["rekening"], gegevens["contract_eind"],
             gegevens["opzegtermijn_dagen"], gegevens["automatisch"], gegevens["notitie"],
             gegevens["link"], vandaag().isoformat(),
         ),
@@ -1928,11 +1985,11 @@ def werk_last_bij(conn, last_id, gegevens, gekoppeld):
     if gekoppeld:
         conn.execute(
             """UPDATE vaste_lasten
-               SET afschrijfdag=?, rekening=?, contract_eind=?, opzegtermijn_dagen=?,
+               SET afschrijfdag=?, referentie=?, rekening=?, contract_eind=?, opzegtermijn_dagen=?,
                    automatisch=?, notitie=?, link=?
                WHERE id=?""",
             (
-                gegevens["afschrijfdag"], gegevens["rekening"], gegevens["contract_eind"],
+                gegevens["afschrijfdag"], gegevens["referentie"], gegevens["rekening"], gegevens["contract_eind"],
                 gegevens["opzegtermijn_dagen"], gegevens["automatisch"], gegevens["notitie"],
                 gegevens["link"], last_id,
             ),
@@ -1940,12 +1997,12 @@ def werk_last_bij(conn, last_id, gegevens, gekoppeld):
         return
     conn.execute(
         """UPDATE vaste_lasten
-           SET naam=?, categorie=?, bedrag_cent=?, frequentie=?, afschrijfdag=?, rekening=?,
+           SET naam=?, categorie=?, bedrag_cent=?, frequentie=?, afschrijfdag=?, referentie=?, rekening=?,
                contract_eind=?, opzegtermijn_dagen=?, automatisch=?, notitie=?, link=?
            WHERE id=?""",
         (
             gegevens["naam"], gegevens["categorie"], gegevens["bedrag_cent"], gegevens["frequentie"],
-            gegevens["afschrijfdag"], gegevens["rekening"], gegevens["contract_eind"],
+            gegevens["afschrijfdag"], gegevens["referentie"], gegevens["rekening"], gegevens["contract_eind"],
             gegevens["opzegtermijn_dagen"], gegevens["automatisch"], gegevens["notitie"],
             gegevens["link"], last_id,
         ),
@@ -1955,6 +2012,13 @@ def werk_last_bij(conn, last_id, gegevens, gekoppeld):
 def last_kaart(rij):
     item = dict(rij)
     item["per"] = FREQUENTIE_PER.get(item["frequentie"], "")
+    volgende = volgende_afschrijving(item.get("referentie"), item["frequentie"])
+    if volgende:
+        item["wanneer"] = "volgende " + datum_nl(volgende)
+    elif not weekritme(item["frequentie"]) and item["afschrijfdag"]:
+        item["wanneer"] = f"dag {item['afschrijfdag']}"
+    else:
+        item["wanneer"] = ""
     item["gekoppeld"] = item["verzekering_id"] is not None
     item["link_ok"] = toon_link(item["link"])
     if item["gekoppeld"]:
@@ -2029,6 +2093,7 @@ def last_bewerk(last_id):
             ruw["categorie"] = rij["categorie"]
             ruw["bedrag"] = format_bedrag(rij["bedrag_cent"])
             ruw["frequentie"] = rij["frequentie"]
+            ruw["volgende"] = volgende_afschrijving(ruw.get("referentie"), rij["frequentie"])
         if fouten:
             extra = koppel_extra(conn, "last", last_id)
             conn.close()

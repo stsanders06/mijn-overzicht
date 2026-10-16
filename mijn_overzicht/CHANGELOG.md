@@ -6,6 +6,7 @@
 - Elke foute inlogpoging telt voor dat adres, ook als er al vanaf andere adressen is geprobeerd. Een juist wachtwoord vanaf een adres dat zelf niet in de pauze zit, werkt meteen.
 - Stopt nginx of de webserver, dan stopt de add-on en kan Home Assistant hem opnieuw starten.
 - Nginx draait zonder root, verbergt zijn versie, en een te groot verzoek krijgt een eigen pagina.
+- Vaste lasten kunnen elke week, elke 2 weken of elke 4 weken. Elke 4 weken telt 13 keer per jaar; per maand is dat bedrag keer 13 gedeeld door 12. Een datum “vanaf” toont de volgende afschrijving, op de last en bij Binnenkort.
 
 ## 0.1.1
 

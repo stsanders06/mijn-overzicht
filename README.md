@@ -33,7 +33,7 @@ Gegevens (database, uploads en het sessiegeheim) blijven in `/data` staan bij ee
 ## Wat erin zit
 
 - **Dashboard:** vaste lasten per maand en per jaar, wat er binnenkort afloopt, en wat je kunt opzeggen.
-- **Vaste lasten & abonnementen:** bedrag, frequentie (maand, kwartaal, jaar), afschrijfdag, rekening, einddatum, opzegtermijn en automatische verlenging. Totalen zijn omgerekend naar een maand.
+- **Vaste lasten & abonnementen:** bedrag, frequentie (elke week, elke 2 weken, elke 4 weken, maand, kwartaal, jaar), afschrijfdag of een datum vanaf wanneer het wekelijkse ritme loopt, rekening, einddatum, opzegtermijn en automatische verlenging. Totalen zijn omgerekend naar een maand.
 - **Verzekeringen:** soort, maatschappij, dekking, polis en premie. Zet “meetellen” aan om de premie één keer als vaste last te tellen.
 - **Voertuigen:** kenteken, bouwjaar, APK, bandenmaat en documenten. Geen kilometerstand.
 - **Bezittingen:** aankoop, winkel, prijs, garantie (“nog X maanden garantie” of “verlopen”) en de bon als foto of PDF, ook HEIC uit de fotobibliotheek.

@@ -257,6 +257,7 @@ textarea { min-height: 110px; resize: vertical; }
 .vink { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 12px; }
 .vink input { width: 22px; min-height: 22px; }
 .twee { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.ritme[hidden] { display: none !important; }
 .notitie { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
 .badge {
   display: inline-flex;

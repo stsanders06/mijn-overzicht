@@ -4,7 +4,7 @@
 <header class="kop">
   <div>
     <h1>Vaste lasten &amp; abonnementen</h1>
-    <p class="lead">€ {{ maand|bedrag }} per maand, € {{ jaar|bedrag }} per jaar. Kwartaal en jaar zijn omgerekend.</p>
+    <p class="lead">€ {{ maand|bedrag }} per maand, € {{ jaar|bedrag }} per jaar. Kwartaal, jaar en weken zijn omgerekend.</p>
   </div>
   <a class="knop" href="{{ url_for('last_nieuw') }}">Nieuwe last</a>
 </header>
@@ -17,7 +17,7 @@
     <span class="naam">{{ item.naam }}</span>
     <span class="bedrag">€ {{ item.bedrag_cent|bedrag }} {{ item.per }}</span>
   </a>
-  <p class="stil">{{ item.categorie }}{% if item.rekening %} · {{ item.rekening }}{% endif %}{% if item.afschrijfdag %} · dag {{ item.afschrijfdag }}{% endif %}{% if item.contract_eind %} · tot {{ item.contract_eind|datum_nl }}{% endif %}{% if item.automatisch %} · verlengt vanzelf{% endif %}</p>
+  <p class="stil">{{ item.categorie }}{% if item.rekening %} · {{ item.rekening }}{% endif %}{% if item.wanneer %} · {{ item.wanneer }}{% endif %}{% if item.contract_eind %} · tot {{ item.contract_eind|datum_nl }}{% endif %}{% if item.automatisch %} · verlengt vanzelf{% endif %}</p>
   {% if item.notitie %}<p class="notitie">{{ item.notitie }}</p>{% endif %}
   {% if item.link_ok %}<p><a class="chip" href="{{ item.link_ok }}">Website</a></p>{% endif %}
   {% include "_chips.html" %}
