@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Op een iPhone stond de onderste balk achter de zwevende Safari-balk. De pagina scrolde in een kolom van 100dvh, en die hoogte legt de balk te laag. Het document scrolt nu zelf. De balk staat vast onderaan, met ruimte voor de thuisindicator, en de labels blijven daarboven helemaal zichtbaar. De inhoud schuift eronderdoor.
+- Het menu Meer schoot bij openen eerst uit beeld en sprong daarna naar het midden. Het groeit nu vanaf de knop Meer, rechtsonder, en blijft in beeld.
+
 ## 0.1.5
 
 - Het formulier voor inkomen heeft `novalidate`, net als de andere formulieren met verplichte velden. Een lege naam bij loon geeft “Vul een naam in.” van de server. De browser toont geen Engelse melding.

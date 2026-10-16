@@ -351,7 +351,14 @@ INDELING = r"""
   const doc = document.documentElement;
   if (doc.scrollWidth > doc.clientWidth + 1) issues.push("overflow pagina " + doc.scrollWidth);
   if (app && app.scrollWidth > app.clientWidth + 1) issues.push("overflow app " + app.scrollWidth);
-  if (navAan && appR.bottom > navR.top + 1) issues.push("balk dekt de pagina " + Math.round(appR.bottom) + ">" + Math.round(navR.top));
+  if (navAan) {
+    if (navStijl.position !== "fixed") issues.push("balk niet vast");
+    if (Math.abs(navR.bottom - window.innerHeight) > 1) issues.push("balk niet onderaan " + Math.round(navR.bottom));
+    const scroller = document.scrollingElement;
+    if (scroller !== document.documentElement && scroller !== document.body) issues.push("scroll niet op het document");
+    const appScroll = app ? getComputedStyle(app).overflowY : "";
+    if (appScroll === "auto" || appScroll === "scroll" || appScroll === "hidden") issues.push("app scrolt zelf " + appScroll);
+  }
   const zichtbaar = (el) => {
     const s = getComputedStyle(el);
     if (s.display === "none" || s.visibility === "hidden" || Number(s.opacity) === 0) return false;
@@ -399,7 +406,8 @@ INDELING = r"""
     }
   }
   if (navAan && app) {
-    app.scrollTop = app.scrollHeight;
+    const scroller = document.scrollingElement;
+    scroller.scrollTop = scroller.scrollHeight;
     let laag = null;
     for (const el of document.querySelectorAll("main.hoofd > *")) {
       const r = el.getBoundingClientRect();
@@ -408,7 +416,7 @@ INDELING = r"""
     }
     const gat = nav.getBoundingClientRect().top - laag;
     if (gat < 12) issues.push("te krap onderaan " + Math.round(gat));
-    app.scrollTop = 0;
+    scroller.scrollTop = 0;
   }
   return issues;
 }
@@ -539,6 +547,186 @@ def test_webkit_indeling(app, post):
                 """() => [...document.styleSheets].filter(s => (s.href || '').includes('opmaak.css') || (s.href || '').includes('kaal.css')).flatMap(s => [...s.cssRules].map(r => r.cssText)).join('\\n')"""
             )
             assert "env(safe-area-inset-bottom" in bron
+            browser.close()
+    finally:
+        server.shutdown()
+
+
+def _iphone(pw, breedte, hoogte):
+    toestel = dict(pw.devices["iPhone 15"])
+    toestel.pop("default_browser_type", None)
+    toestel["viewport"] = {"width": breedte, "height": hoogte}
+    return toestel
+
+
+def test_webkit_iphone_balk_en_meer(app, post):
+    """iPhone-descriptor: balk in beeld, document scrolt, Meer blijft in beeld."""
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    for nummer in range(8):
+        post("/lasten/nieuw", data={
+            "naam": f"Last {nummer}",
+            "categorie": "Abonnement",
+            "bedrag": "12",
+            "frequentie": "maand",
+        })
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    basis = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with playwright_sync.sync_playwright() as pw:
+            browser = pw.webkit.launch()
+            for breedte, hoogte in ((390, 844), (320, 844)):
+                toestel = _iphone(pw, breedte, hoogte)
+                assert toestel["is_mobile"] is True
+                assert toestel["has_touch"] is True
+                context = browser.new_context(**toestel)
+                page = context.new_page()
+                page.set_default_timeout(8000)
+                page.goto(basis + "/inloggen")
+                assert page.evaluate("() => matchMedia('(hover: none) and (pointer: coarse)').matches")
+                page.fill("#wachtwoord", TEST_WACHTWOORD)
+                page.locator("form button[type=submit]").tap()
+                page.wait_for_selector("h1")
+                page.goto(basis + "/bezittingen")
+                page.wait_for_selector("h1")
+                meting = page.evaluate(
+                    """() => {
+                      const nav = document.querySelector('nav.balk');
+                      const stijl = getComputedStyle(nav);
+                      const navR = nav.getBoundingClientRect();
+                      const scroller = document.scrollingElement;
+                      const app = document.querySelector('.app');
+                      const labels = [...document.querySelectorAll('nav.balk > a, nav.balk summary.balk-item')];
+                      const labelProblemen = [];
+                      for (const el of labels) {
+                        const r = el.getBoundingClientRect();
+                        const bereik = document.createRange();
+                        bereik.selectNodeContents(el);
+                        const t = bereik.getBoundingClientRect();
+                        const naam = (el.innerText || '').trim();
+                        if (r.top < -0.5 || r.left < -0.5 || r.bottom > window.innerHeight + 0.5 || r.right > window.innerWidth + 0.5) {
+                          labelProblemen.push(naam + ' vak buiten');
+                        }
+                        if (t.width < 2 || t.height < 8) labelProblemen.push(naam + ' tekst plat');
+                        if (t.top < -0.5 || t.left < -0.5 || t.bottom > window.innerHeight + 0.5 || t.right > window.innerWidth + 0.5) {
+                          labelProblemen.push(naam + ' tekst buiten');
+                        }
+                        if (r.height < 40) labelProblemen.push(naam + ' te laag ' + Math.round(r.height));
+                        if (el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflowX !== 'visible') {
+                          labelProblemen.push(naam + ' afgeknipt');
+                        }
+                      }
+                      const css = [...document.styleSheets]
+                        .filter(s => (s.href || '').includes('opmaak.css'))
+                        .flatMap(s => [...s.cssRules].map(r => r.cssText))
+                        .join('\\n');
+                      return {
+                        vast: stijl.position,
+                        onder: stijl.bottom,
+                        navOnder: Math.abs(navR.bottom - window.innerHeight),
+                        navHoog: navR.height,
+                        paddingOnder: getComputedStyle(document.body).paddingBottom,
+                        appScroll: getComputedStyle(app).overflowY,
+                        bodyScroll: getComputedStyle(document.body).overflowY,
+                        scroller: scroller === document.documentElement ? 'html' : (scroller === document.body ? 'body' : 'anders'),
+                        labels: labels.map(el => (el.innerText || '').trim()),
+                        labelProblemen,
+                        viewport: document.querySelector('meta[name=viewport]').content,
+                        cssVast: css.includes('position: fixed') && css.includes('bottom: 0'),
+                        cssSafe: css.includes('env(safe-area-inset-bottom'),
+                        cssY: /translateY\\(8px\\)/.test(css),
+                        cssOorsprong: (css.match(/transform-origin:[^;]+/) || ['geen'])[0],
+                      };
+                    }"""
+                )
+                assert meting["vast"] == "fixed", meting
+                assert meting["onder"] == "0px", meting
+                assert meting["navOnder"] <= 1, meting
+                assert meting["navHoog"] >= 64, meting
+                assert meting["paddingOnder"] == "64px", meting
+                assert meting["appScroll"] == "visible", meting
+                assert meting["bodyScroll"] in ("visible", "auto"), meting
+                assert meting["scroller"] in ("html", "body"), meting
+                assert meting["labels"] == ["Overzicht", "Lasten", "Polissen", "Spullen", "Meer"], meting
+                assert not meting["labelProblemen"], (breedte, meting["labelProblemen"])
+                assert "viewport-fit=cover" in meting["viewport"]
+                assert meting["cssVast"] and meting["cssSafe"] and meting["cssY"], meting.get("cssOorsprong")
+                assert "bottom" in meting["cssOorsprong"] and "right" in meting["cssOorsprong"], meting["cssOorsprong"]
+                page.goto(basis + "/lasten")
+                page.wait_for_selector("h1")
+                scroll = page.evaluate(
+                    """() => {
+                      const scroller = document.scrollingElement;
+                      const voor = scroller.scrollTop;
+                      scroller.scrollTop = scroller.scrollHeight;
+                      return {
+                        voor,
+                        na: scroller.scrollTop,
+                        hoog: scroller.scrollHeight,
+                        zicht: scroller.clientHeight,
+                        element: scroller === document.documentElement || scroller === document.body,
+                      };
+                    }"""
+                )
+                assert scroll["element"] is True, scroll
+                assert scroll["hoog"] > scroll["zicht"] + 40, scroll
+                assert scroll["na"] > scroll["voor"] + 40, scroll
+                page.evaluate("() => { document.scrollingElement.scrollTop = 0; }")
+                page.goto(basis + "/")
+                page.wait_for_selector("nav.balk")
+                frames = page.evaluate(
+                    """() => {
+                      const vel = document.querySelector('.meer-vel');
+                      const summary = document.querySelector('details.meer > summary');
+                      summary.click();
+                      const anim = vel.getAnimations().find(a => a.animationName === 'meer-open') || vel.getAnimations()[0];
+                      if (!anim) return {fout: 'geen animatie'};
+                      anim.pause();
+                      const duur = Number(anim.effect.getComputedTiming().duration) || 200;
+                      const monsters = [];
+                      for (const t of [0, 40, 80, 120, 160, duur]) {
+                        anim.currentTime = Math.min(t, duur);
+                        const r = vel.getBoundingClientRect();
+                        const m = new DOMMatrix(getComputedStyle(vel).transform);
+                        monsters.push({
+                          t,
+                          top: r.top, right: r.right, bottom: r.bottom, left: r.left,
+                          width: r.width, height: r.height,
+                          tx: m.m41, ty: m.m42,
+                          opacity: parseFloat(getComputedStyle(vel).opacity),
+                        });
+                      }
+                      anim.finish();
+                      const einde = vel.getBoundingClientRect();
+                      const nav = document.querySelector('nav.balk').getBoundingClientRect();
+                      const knop = summary.getBoundingClientRect();
+                      return {duur, monsters, einde: {top: einde.top, right: einde.right, bottom: einde.bottom, left: einde.left}, navTop: nav.top, knopTop: knop.top, knopRight: knop.right, knopLeft: knop.left};
+                    }"""
+                )
+                assert "fout" not in frames, (breedte, frames)
+                assert len(frames["monsters"]) >= 5, frames
+                assert frames["duur"] <= 250, frames
+                buiten = []
+                for monster in frames["monsters"]:
+                    if monster["width"] < 8 or monster["height"] < 8:
+                        buiten.append(("leeg", monster))
+                        continue
+                    if monster["top"] < -1 or monster["left"] < -1:
+                        buiten.append(("boven", monster))
+                    if monster["bottom"] > hoogte + 1 or monster["right"] > breedte + 1:
+                        buiten.append(("onder", monster))
+                    if abs(monster["ty"]) > 24 or abs(monster["tx"]) > 24:
+                        buiten.append(("sprong", monster))
+                assert not buiten, (breedte, buiten)
+                einde = frames["einde"]
+                assert abs(einde["bottom"] - (frames["navTop"] - 8)) <= 2, frames
+                assert einde["bottom"] <= frames["knopTop"] + 1, frames
+                assert einde["bottom"] >= frames["knopTop"] - 20, frames
+                assert einde["right"] >= frames["knopLeft"], frames
+                assert einde["right"] <= breedte + 1, frames
+                assert einde["right"] >= breedte - 24, frames
+                context.close()
             browser.close()
     finally:
         server.shutdown()

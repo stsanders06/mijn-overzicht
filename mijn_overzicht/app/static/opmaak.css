@@ -350,21 +350,22 @@ textarea { min-height: 110px; resize: vertical; }
 .kies-rij input { flex: 1; min-width: 0; }
 .vast-noot { color: var(--mist); font-size: 0.85rem; }
 @media (max-width: 800px) {
-  html { height: 100%; }
+  /* Het document scrolt zelf. Een kolom van 100dvh met een binnenste scroller
+     legt de balk onder de zwevende balk van Safari. */
+  html { height: auto; }
   body {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    height: 100dvh;
-    overflow: hidden;
-    padding: 0;
+    display: block;
+    height: auto;
+    min-height: 100svh;
+    overflow: visible;
+    padding-bottom: var(--nav-safe);
   }
   .app {
     display: block;
-    flex: 1 1 auto;
+    flex: none;
     min-height: 0;
     min-width: 0;
-    overflow: auto;
+    overflow: visible;
   }
   .zij { display: none; }
   .hoofd {
@@ -380,8 +381,10 @@ textarea { min-height: 110px; resize: vertical; }
   .cijfers, .twee { grid-template-columns: 1fr; }
   .balk {
     display: flex;
-    position: relative;
-    flex: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
     z-index: 20;
     height: var(--nav-safe);
     padding-top: 0;
@@ -410,9 +413,11 @@ textarea { min-height: 110px; resize: vertical; }
     color: #c5d5cc;
     text-decoration: none;
     font-family: "Atelier Sans", "Source Sans 3", "Inter", sans-serif;
+    overflow: visible;
     font-size: 10px;
     font-weight: 600;
     line-height: 1.15;
+    white-space: nowrap;
     text-align: center;
     background: transparent;
     border: 0;
@@ -430,7 +435,7 @@ textarea { min-height: 110px; resize: vertical; }
     left: max(var(--ruimte-2), env(safe-area-inset-left, 0px));
     right: max(var(--ruimte-2), env(safe-area-inset-right, 0px));
     bottom: calc(var(--nav-safe) + var(--ruimte-2));
-    max-height: calc(100dvh - var(--nav-safe) - var(--ruimte-7) - env(safe-area-inset-top, 0px));
+    max-height: calc(100svh - var(--nav-safe) - var(--ruimte-7) - env(safe-area-inset-top, 0px));
     overflow: auto;
     background: var(--kaart);
     color: var(--inkt);
@@ -440,23 +445,18 @@ textarea { min-height: 110px; resize: vertical; }
     padding: 8px;
     display: flex;
     flex-direction: column;
-    transform-origin: 90% 100%;
+    transform-origin: bottom right;
   }
   @keyframes meer-open {
-    from { opacity: 0; transform: translateY(12px) scale(0.92); }
+    from { opacity: 0; transform: translateY(8px) scale(0.96); }
     to { opacity: 1; transform: none; }
   }
   details.meer::details-content {
-    transform-origin: 90% 100%;
     opacity: 1;
     transform: none;
-    transition: opacity 200ms ease-out, transform 200ms ease-out, content-visibility 200ms allow-discrete;
+    transition: opacity 200ms ease-out, content-visibility 200ms allow-discrete;
   }
-  details.meer[open]::details-content { animation: meer-open 200ms ease-out; }
-  details.meer:not([open])::details-content {
-    opacity: 0;
-    transform: translateY(12px) scale(0.92);
-  }
+  details.meer:not([open])::details-content { opacity: 0; }
   details.meer:not([open]) > .meer-vel { display: none; }
   details.meer:not([open]) > .meer-vel {
     display: flex;
@@ -468,10 +468,10 @@ textarea { min-height: 110px; resize: vertical; }
     visibility: visible;
     pointer-events: auto;
     transition: visibility 0s linear 0s;
+    animation: meer-open 200ms ease-out both;
   }
   @media (prefers-reduced-motion: reduce) {
     details.meer::details-content,
-    details.meer[open]::details-content,
     details.meer:not([open]) > .meer-vel,
     details.meer[open] > .meer-vel {
       animation: none;
