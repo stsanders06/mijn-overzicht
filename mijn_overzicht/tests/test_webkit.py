@@ -113,3 +113,52 @@ def test_webkit_breedtes_menu_en_tikvlakken(app):
             browser.close()
     finally:
         server.shutdown()
+
+
+def test_webkit_meer_sluit_op_aanraking(app):
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    server = make_server("127.0.0.1", 0, app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    basis = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with playwright_sync.sync_playwright() as pw:
+            browser = pw.webkit.launch()
+            for breedte in (320, 390):
+                context = browser.new_context(
+                    viewport={"width": breedte, "height": 800},
+                    has_touch=True,
+                )
+                page = context.new_page()
+                page.goto(basis + "/inloggen")
+                page.fill("#wachtwoord", TEST_WACHTWOORD)
+                page.tap("button[type=submit]")
+                page.wait_for_selector("h1")
+                uitlijning = page.evaluate(
+                    """() => {
+                      const meer = document.querySelector(".meer > summary").getBoundingClientRect();
+                      const buur = document.querySelector(".balk > a").getBoundingClientRect();
+                      return {
+                        dy: Math.abs((meer.top + meer.bottom) / 2 - (buur.top + buur.bottom) / 2),
+                        dh: Math.abs(meer.height - buur.height),
+                      };
+                    }"""
+                )
+                assert uitlijning["dy"] <= 2, (breedte, uitlijning)
+                assert uitlijning["dh"] <= 2, (breedte, uitlijning)
+                page.tap(".meer > summary")
+                assert page.eval_on_selector("details.meer", "el => el.open")
+                vak = page.locator("h1").bounding_box()
+                page.touchscreen.tap(vak["x"] + vak["width"] / 2, vak["y"] + min(12, vak["height"] / 2))
+                assert page.eval_on_selector("details.meer", "el => !el.open")
+                assert page.eval_on_selector(
+                    ".meer-vel", "el => getComputedStyle(el).display === 'none'"
+                )
+                page.tap(".meer > summary")
+                assert page.eval_on_selector("details.meer", "el => el.open")
+                page.keyboard.press("Escape")
+                assert page.eval_on_selector("details.meer", "el => !el.open")
+                context.close()
+            browser.close()
+    finally:
+        server.shutdown()

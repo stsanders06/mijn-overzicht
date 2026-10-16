@@ -319,7 +319,14 @@ textarea { min-height: 110px; resize: vertical; }
     border-top: 1px solid #2a3a42;
   }
   body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
-  .balk > a, .balk .meer { flex: 1; min-width: 0; }
+  .balk > a, .balk .meer { flex: 1; min-width: 0; align-self: stretch; }
+  .meer {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+  }
   .balk > a, .balk-item {
     display: flex;
     flex-direction: column;
@@ -330,17 +337,22 @@ textarea { min-height: 110px; resize: vertical; }
     min-width: 44px;
     color: #c5d5cc;
     text-decoration: none;
+    font-family: "Atelier Sans", "Source Sans 3", "Inter", sans-serif;
     font-size: 11px;
     font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
     background: transparent;
     border: 0;
     width: 100%;
+    margin: 0;
+    padding: 0;
     cursor: pointer;
   }
+  .meer > summary { flex: 1; list-style: none; appearance: none; }
+  .meer > summary::marker,
+  .meer > summary::-webkit-details-marker { content: none; display: none; }
   .balk > a.actief, .balk-item.actief { color: #f3c7a8; }
-  .meer { position: static; }
-  .meer > summary { list-style: none; }
-  .meer > summary::-webkit-details-marker { display: none; }
   .meer-vel {
     position: fixed;
     left: 8px;

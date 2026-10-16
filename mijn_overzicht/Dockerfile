@@ -11,7 +11,7 @@ WORKDIR /opt/app
 
 COPY app/requirements.txt /opt/app/requirements.txt
 
-RUN apk add --no-cache tzdata \
+RUN apk add --no-cache tzdata nginx \
     && pip3 install --no-cache-dir --break-system-packages -r /opt/app/requirements.txt
 
 COPY app /opt/app
@@ -20,7 +20,7 @@ COPY rootfs /
 RUN chmod a+x /usr/bin/mijn-overzicht
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.1.0
+ARG BUILD_VERSION=0.1.1
 ENV ADDON_VERSION=${BUILD_VERSION}
 LABEL \
     io.hass.name="Mijn Overzicht" \

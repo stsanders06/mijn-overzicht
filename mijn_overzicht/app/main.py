@@ -5,6 +5,7 @@ en buiten de inlog van Home Assistant. Daarom heeft ze een eigen account.
 Gegevens staan in /data en blijven bij een update staan. Er worden geen
 voorbeeldgegevens ingevuld.
 """
+import atexit
 import calendar
 import hashlib
 import io
@@ -16,6 +17,7 @@ import secrets
 import socket
 import sqlite3
 import ssl
+import subprocess
 import sys
 import tempfile
 import time
@@ -31,7 +33,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 # Hoort gelijk te lopen met version in config.yaml. In Home Assistant wint het
 # versienummer dat de Supervisor heeft geïnstalleerd; anders deze fallback.
-VERSIE_FALLBACK = "0.1.0"
+VERSIE_FALLBACK = "0.1.1"
 VERSIE = os.environ.get("ADDON_VERSION") or VERSIE_FALLBACK
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -50,12 +52,17 @@ BINNENKORT_DAGEN = 60
 VERLOPEN_DAGEN = 365
 
 WACHTWOORD_MINIMUM = 8
-# Vertraging begint pas na een paar mislukte pogingen en loopt exponentieel op,
-# met een plafond. Per IP mag dat een minuut worden; voor het account zelf
-# hooguit een paar seconden, zodat een ander adres Stone niet lang buitensluit.
+# Vertraging begint pas na een paar mislukte pogingen en loopt exponentieel op.
+# Per adres blokkeert die pauze ook een juist wachtwoord. De accountpauze geldt
+# alleen voor foute pogingen: een juist wachtwoord vanaf een ander adres werkt meteen.
 PAUZE_NA_POGINGEN = 3
 IP_PLAFOND = 60
 ACCOUNT_PLAFOND = 8
+POGINGEN_IP_MAX = 256
+# Een dag. Langer vastzetten op http-naar-https is lastig terug te draaien.
+HSTS_SECONDEN = 86400
+# Waitress blijft http, alleen op localhost. Nginx doet de TLS op de echte poort.
+INTERN_POORT = 18080
 SESSIE_DAGEN = 30
 MAX_BESTAND = 12 * 1024 * 1024
 MAX_VERZOEK = 32 * 1024 * 1024
@@ -555,11 +562,13 @@ def zorg_setup_code():
     with open(SETUP_PATH, "w", encoding="utf-8") as bestand:
         bestand.write(generate_password_hash(code))
     _chmod(SETUP_PATH, 0o600)
-    logging.getLogger(__name__).warning(
-        "Nog geen account. Zet een wachtwoord in de add-on en herstart, "
-        "of open /instellen met deze eenmalige code: %s",
-        code,
+    regel = (
+        "Mijn Overzicht: nog geen account. Zet een wachtwoord in de add-on en herstart, "
+        f"of open /instellen met deze eenmalige code: {code}"
     )
+    # print blijft zichtbaar als het logniveau warning en info wegfiltert.
+    print(regel, flush=True)
+    logging.getLogger(__name__).warning("%s", regel)
     return code
 
 
@@ -686,7 +695,7 @@ def beveiligingskoppen(antwoord):
         antwoord.headers["X-Frame-Options"] = "DENY"
         antwoord.headers["Content-Security-Policy"] = PAGINA_CSP
     if HTTPS_ACTIEF or request.is_secure:
-        antwoord.headers["Strict-Transport-Security"] = "max-age=31536000"
+        antwoord.headers["Strict-Transport-Security"] = f"max-age={HSTS_SECONDEN}"
     return antwoord
 
 
@@ -765,13 +774,35 @@ def pauze_seconden(aantal, laatste, plafond):
     return int(resterend) + (0 if resterend == int(resterend) else 1)
 
 
+def ip_wachttijd():
+    aantal, laatste = POGINGEN_IP.get(_afzender(), (0, None))
+    return pauze_seconden(aantal, laatste, IP_PLAFOND)
+
+
+def account_wachttijd():
+    aantal, laatste = POGINGEN_ACCOUNT
+    return pauze_seconden(aantal, laatste, ACCOUNT_PLAFOND)
+
+
 def wachttijd_over():
-    ip_aantal, ip_laatste = POGINGEN_IP.get(_afzender(), (0, None))
-    acc_aantal, acc_laatste = POGINGEN_ACCOUNT
-    return max(
-        pauze_seconden(ip_aantal, ip_laatste, IP_PLAFOND),
-        pauze_seconden(acc_aantal, acc_laatste, ACCOUNT_PLAFOND),
-    )
+    """Pauze die het formulier toont: alleen dit adres, niet het hele account."""
+    return ip_wachttijd()
+
+
+def hash_klopt(hash_, wachtwoord):
+    if not isinstance(hash_, str) or not hash_.strip() or not isinstance(wachtwoord, str):
+        return False
+    try:
+        return check_password_hash(hash_, wachtwoord)
+    except (ValueError, TypeError):
+        return False
+
+
+def wachtwoord_ontbreekt():
+    rij = lees_account()
+    if rij is None:
+        return False
+    return not str(rij["wachtwoord"] or "").strip()
 
 
 def noteer_mislukking():
@@ -780,6 +811,10 @@ def noteer_mislukking():
     ip = _afzender()
     aantal, _ = POGINGEN_IP.get(ip, (0, None))
     POGINGEN_IP[ip] = (aantal + 1, nu_)
+    if len(POGINGEN_IP) > POGINGEN_IP_MAX:
+        oudste = sorted(POGINGEN_IP, key=lambda sleutel: POGINGEN_IP[sleutel][1] or datetime.min)
+        for sleutel in oudste[: len(POGINGEN_IP) - POGINGEN_IP_MAX]:
+            POGINGEN_IP.pop(sleutel, None)
     acc_aantal, _ = POGINGEN_ACCOUNT
     POGINGEN_ACCOUNT = (acc_aantal + 1, nu_)
 
@@ -851,21 +886,33 @@ def inloggen():
         return redirect(url_for("index"))
     verder = request.args.get("verder", "") if request.method == "GET" else request.form.get("verder", "")
     if request.method == "POST":
-        if wachttijd_over():
+        # Dit adres heeft te vaak gefaald. Een ander adres wordt hier niet door geraakt.
+        if ip_wachttijd():
             return redirect(url_for("inloggen"))
         wachtwoord = request.form.get("wachtwoord", "")
         conn = verbind()
         rij = conn.execute("SELECT wachtwoord FROM account WHERE id=1").fetchone()
         conn.close()
-        hash_ = rij["wachtwoord"] if rij else DUMMY_HASH
-        if check_password_hash(hash_, wachtwoord) and rij is not None:
+        hash_ = rij["wachtwoord"] if rij else ""
+        if rij is not None and hash_klopt(hash_, wachtwoord):
             wis_mislukkingen()
             start_sessie(request.form.get("onthoud") == "ja")
             return redirect(veilig_pad(verder) or url_for("index"))
+        # Foute gokken delen een korte accountpauze. Het juiste wachtwoord is hier al langs.
+        if account_wachttijd():
+            return redirect(url_for("inloggen"))
         noteer_mislukking()
-        melding("Wachtwoord klopt niet.", "fout")
+        if not str(hash_ or "").strip():
+            melding("Er is geen wachtwoord ingesteld. Zet het in de add-on en start opnieuw.", "fout")
+        else:
+            melding("Wachtwoord klopt niet.", "fout")
         return redirect(url_for("inloggen", verder=verder))
-    return render_template("inloggen.html", verder=verder, wacht=wachttijd_over())
+    return render_template(
+        "inloggen.html",
+        verder=verder,
+        wacht=ip_wachttijd(),
+        zonder_wachtwoord=wachtwoord_ontbreekt(),
+    )
 
 
 @app.route("/uitloggen", methods=["POST"])
@@ -3120,24 +3167,111 @@ synchroniseer_wachtwoord()
 activeer_https_vlag()
 
 
+def _nginx_quotatie(pad):
+    return '"' + pad.replace("\\", "/").replace('"', "") + '"'
+
+
+def start_nginx(poort, intern, cert, sleutel):
+    """TLS eindigt in nginx. Waitress ziet alleen http op localhost."""
+    log = logging.getLogger(__name__)
+    if not shutil_which("nginx"):
+        log.error("nginx ontbreekt in de container. Https kan niet starten.")
+        sys.exit(1)
+    tmp = tempfile.gettempdir()
+    os.makedirs(os.path.join(tmp, "nginx-client"), exist_ok=True)
+    os.makedirs(os.path.join(tmp, "nginx-proxy"), exist_ok=True)
+    config_pad = os.path.join(DATA_DIR, "nginx.conf")
+    pid = os.path.join(DATA_DIR, "nginx.pid")
+    config = "\n".join([
+        "worker_processes 1;",
+        "error_log /dev/stderr warn;",
+        f"pid {pid};",
+        "events { worker_connections 256; }",
+        "http {",
+        "    access_log off;",
+        "    client_max_body_size 32m;",
+        f"    client_body_temp_path {tmp}/nginx-client;",
+        f"    proxy_temp_path {tmp}/nginx-proxy;",
+        "    server {",
+        f"        listen {poort} ssl;",
+        "        server_name _;",
+        f"        ssl_certificate {_nginx_quotatie(cert)};",
+        f"        ssl_certificate_key {_nginx_quotatie(sleutel)};",
+        "        ssl_protocols TLSv1.2 TLSv1.3;",
+        "        location / {",
+        f"            proxy_pass http://127.0.0.1:{intern};",
+        "            proxy_http_version 1.1;",
+        "            proxy_set_header Host $host;",
+        "            proxy_set_header X-Forwarded-For $remote_addr;",
+        "            proxy_set_header X-Forwarded-Proto https;",
+        "            proxy_read_timeout 120s;",
+        "            proxy_send_timeout 120s;",
+        "        }",
+        "    }",
+        "}",
+        "",
+    ])
+    with open(config_pad, "w", encoding="utf-8") as bestand:
+        bestand.write(config)
+    test = subprocess.run(["nginx", "-t", "-c", config_pad], capture_output=True, text=True)
+    if test.returncode != 0:
+        log.error("nginx kan niet starten: %s", (test.stderr or test.stdout or "").strip())
+        sys.exit(1)
+    proc = subprocess.Popen(["nginx", "-c", config_pad, "-g", "daemon off;"])
+
+    def stop():
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    atexit.register(stop)
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            log.error("nginx stopte meteen (code %s).", proc.returncode)
+            sys.exit(1)
+        try:
+            with socket.create_connection(("127.0.0.1", poort), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    log.error("nginx luistert niet op poort %s.", poort)
+    stop()
+    sys.exit(1)
+
+
+def shutil_which(naam):
+    for mapnaam in os.environ.get("PATH", "").split(os.pathsep):
+        kandidaat = os.path.join(mapnaam, naam)
+        if os.path.isfile(kandidaat) and os.access(kandidaat, os.X_OK):
+            return kandidaat
+    return None
+
+
 def start_server(poort):
     log = logging.getLogger(__name__)
-    schema = "https" if HTTPS_ACTIEF else "http"
+    # Waitress meldt anders het interne adres. De regel hieronder is de URL voor de browser.
+    logging.getLogger("waitress").setLevel(logging.WARNING)
     if HTTPS_ACTIEF:
-        context = maak_ssl_context()
-        if context is None:
+        if maak_ssl_context() is None:
             sys.exit(1)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("0.0.0.0", poort))
-        sock.listen(128)
-        beveiligd = context.wrap_socket(sock, server_side=True)
+        cert, sleutel = ssl_paden()
+        intern = INTERN_POORT if poort != INTERN_POORT else INTERN_POORT + 1
+        start_nginx(poort, intern, cert, sleutel)
+        log.info("Mijn Overzicht %s is bereikbaar op https://0.0.0.0:%s", VERSIE, poort)
         from waitress import serve
 
-        log.info("Mijn Overzicht %s luistert op %s poort %s", VERSIE, schema, poort)
-        serve(app, sockets=[beveiligd], url_scheme="https", threads=4)
+        serve(app, host="127.0.0.1", port=intern, threads=8, url_scheme="https")
         return
-    log.info("Mijn Overzicht %s luistert op %s poort %s", VERSIE, schema, poort)
+    log.warning(
+        "ssl staat uit. Het verkeer op poort %s is onversleuteld http. "
+        "Zet deze poort niet open naar internet; gebruik het eigen netwerk, een VPN, of zet ssl aan.",
+        poort,
+    )
+    log.info("Mijn Overzicht %s is bereikbaar op http://0.0.0.0:%s", VERSIE, poort)
     try:
         from waitress import serve
 

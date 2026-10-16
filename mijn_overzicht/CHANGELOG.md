@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Https loopt via nginx naar de app op localhost. Een open verbinding of een groot bestand blokkeert de andere bezoekers niet meer.
+- Een juist wachtwoord wordt niet tegengehouden door foute pogingen vanaf andere adressen. Na foute pogingen wacht alleen dat adres zelf, tot hooguit 60 seconden.
+- Het menu Meer sluit ook als je erbuiten tikt.
+- De eenmalige instelcode staat altijd in de uitvoer. Na een teruggezette back-up zegt de inlogpagina dat je het wachtwoord in de add-on moet zetten en opnieuw moet starten.
+- Zonder ssl waarschuwt het log dat het verkeer http is. Met ssl stuurt de site HSTS voor één dag.
+
 ## 0.1.0
 
 Eerste versie.

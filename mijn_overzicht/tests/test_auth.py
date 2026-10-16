@@ -181,17 +181,82 @@ def test_pauze_is_exponentieel_en_begrensd():
     assert overzicht.pauze_seconden(12, moment, 8) == 8
 
 
-def test_pauze_per_ip_en_kort_voor_het_account(app):
+def test_pauze_per_ip_en_account_blokkeert_geen_juist_wachtwoord(app):
     moment = overzicht.nu()
     overzicht.POGINGEN_IP["203.0.113.9"] = (12, moment)
     overzicht.POGINGEN_ACCOUNT = (0, None)
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "203.0.113.9"}):
         assert overzicht.wachttijd_over() == 60
+        assert overzicht.ip_wachttijd() == 60
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "198.51.100.4"}):
         assert overzicht.wachttijd_over() == 0
     overzicht.POGINGEN_ACCOUNT = (12, moment)
     with app.test_request_context(environ_overrides={"REMOTE_ADDR": "198.51.100.4"}):
-        assert overzicht.wachttijd_over() == 8
+        assert overzicht.account_wachttijd() == 8
+        assert overzicht.wachttijd_over() == 0
+
+
+def _inlog_vanaf(app, ip, wachtwoord):
+    with app.test_client() as browser:
+        with browser.session_transaction() as sessie:
+            sessie["csrf_token"] = "test-token"
+        return browser.post(
+            "/inloggen",
+            data={"csrf_token": "test-token", "wachtwoord": wachtwoord},
+            environ_base={"REMOTE_ADDR": ip},
+            follow_redirects=False,
+        )
+
+
+def test_juist_wachtwoord_lukt_vanaf_draaiende_adressen(app, monkeypatch):
+    vast = overzicht.nu()
+    monkeypatch.setattr(overzicht, "nu", lambda: vast)
+    for _ in range(3):
+        antwoord = _inlog_vanaf(app, "203.0.113.77", "fout")
+        assert "/inloggen" in antwoord.headers["Location"]
+    geblokkeerd = _inlog_vanaf(app, "203.0.113.77", TEST_WACHTWOORD)
+    assert "/inloggen" in geblokkeerd.headers["Location"]
+    for n in range(12):
+        antwoord = _inlog_vanaf(app, f"203.0.113.{n + 1}", "fout")
+        assert "/inloggen" in antwoord.headers["Location"]
+    gelukt = 0
+    for n in range(20):
+        antwoord = _inlog_vanaf(app, f"198.51.100.{n + 1}", TEST_WACHTWOORD)
+        if antwoord.headers["Location"].endswith("/"):
+            gelukt += 1
+    assert gelukt == 20
+
+
+def test_pogingen_per_ip_blijven_begrensd(app):
+    moment = overzicht.nu()
+    overzicht.POGINGEN_IP.clear()
+    for n in range(overzicht.POGINGEN_IP_MAX + 40):
+        overzicht.POGINGEN_IP[f"198.51.{n // 250}.{n % 250}"] = (1, moment)
+    with app.test_request_context(environ_overrides={"REMOTE_ADDR": "203.0.113.50"}):
+        overzicht.noteer_mislukking()
+    assert len(overzicht.POGINGEN_IP) <= overzicht.POGINGEN_IP_MAX
+    assert "203.0.113.50" in overzicht.POGINGEN_IP
+
+
+def test_instelcode_staat_altijd_op_stdout(zonder_account, capsys):
+    code = overzicht.zorg_setup_code()
+    assert code in capsys.readouterr().out
+
+
+def test_inlog_legt_lege_hash_na_back_up_uit(uitgelogde_client):
+    conn = overzicht.verbind()
+    conn.execute("UPDATE account SET wachtwoord='' WHERE id=1")
+    conn.commit()
+    conn.close()
+    tekst = uitgelogde_client.get("/inloggen").get_data(as_text=True)
+    assert "back-up" in tekst
+    assert "add-on" in tekst
+    antwoord = uitgelogde_client.post(
+        "/inloggen",
+        data={"csrf_token": "test-token", "wachtwoord": TEST_WACHTWOORD},
+        follow_redirects=True,
+    )
+    assert "Dashboard" not in antwoord.get_data(as_text=True)
 
 
 def test_post_zonder_csrf_wordt_geweigerd(client):
@@ -290,7 +355,7 @@ def test_secure_en_hsts_alleen_bij_https(uitgelogde_client, app):
                 follow_redirects=False,
             )
             assert "Secure" in antwoord.headers.get("Set-Cookie", "")
-            assert antwoord.headers["Strict-Transport-Security"] == "max-age=31536000"
+            assert antwoord.headers["Strict-Transport-Security"] == "max-age=86400"
     finally:
         overzicht.HTTPS_ACTIEF = False
         app.config["SESSION_COOKIE_SECURE"] = False

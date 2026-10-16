@@ -16,13 +16,13 @@ De site start leeg. Er staan geen voorbeeldgegevens in.
 2. Installeer **Mijn Overzicht**. Zet **vóór de eerste start** een wachtwoord van minstens 8 tekens bij de add-on. Start daarna.
 3. Open in de browser `http://<ip-van-home-assistant>:8320` als je op hetzelfde netwerk zit.
 
-Wijzig je daarna een optie (wachtwoord of ssl), start de add-on opnieuw. Een leeg wachtwoordveld laat een bestaand wachtwoord staan. Alleen als er nog geen account is én het veld leeg is, schrijft de add-on een **eenmalige instelcode** in het log. Die code gebruik je op `/instellen`. Een nieuwe start maakt een nieuwe code.
+Wijzig je daarna een optie (wachtwoord of ssl), start de add-on opnieuw. Een leeg wachtwoordveld laat een bestaand wachtwoord staan. Alleen als er nog geen account is én het veld leeg is, schrijft de add-on een **eenmalige instelcode** naar de uitvoer (ook als het logniveau waarschuwingen verbergt). Die code gebruik je op `/instellen`. Een nieuwe start maakt een nieuwe code.
 
-**Zet poort 8320 niet open naar internet.** Geen port forward. Gebruik het thuisnetwerk, of een VPN zoals WireGuard of Tailscale. Wil je versleuteld verkeer, zet `ssl` aan en wijs `certfile` en `keyfile` naar certificaten in `/ssl` (de map is alleen-lezen gekoppeld). Dan wordt het cookie `Secure` en stuurt de site HSTS. Zonder ssl blijft het gewoon http op het eigen netwerk, en is het cookie niet `Secure`.
+**Zet poort 8320 niet open naar internet.** Geen port forward. Gebruik het thuisnetwerk, of een VPN zoals WireGuard of Tailscale. Wil je versleuteld verkeer, zet `ssl` aan en wijs `certfile` en `keyfile` naar certificaten in `/ssl` (de map is alleen-lezen gekoppeld). Nginx sluit dan TLS af; het cookie is `Secure` en de site stuurt HSTS voor één dag. Zonder ssl blijft het gewoon http op het eigen netwerk, is het cookie niet `Secure`, en waarschuwt het log daarvoor.
 
 Uitloggen, het wachtwoord wijzigen in de site, en het wachtwoord wijzigen in de add-on maken oude sessies ongeldig.
 
-Na een paar foute pogingen wacht het inloggen even, en daarna steeds iets langer. Vanaf hetzelfde adres loopt dat op tot hooguit 60 seconden. Voor het account zelf is het plafond 8 seconden, zodat een ander adres je niet lang buitensluit. Een geblokkeerde poging telt niet extra mee.
+Na een paar foute pogingen vanaf hetzelfde adres wacht het inloggen even, en daarna steeds iets langer, tot hooguit 60 seconden. Dat geldt ook voor een juist wachtwoord vanaf dat adres. Foute pogingen vanaf andere adressen houden een juist wachtwoord niet tegen. Een geblokkeerde poging telt niet extra mee.
 
 De back-up is een zip van de database en de bestanden. De wachtwoord-hash en `secret_key` zitten er niet in. Na terugzetten zet je het wachtwoord weer in de add-on en start je opnieuw.
 

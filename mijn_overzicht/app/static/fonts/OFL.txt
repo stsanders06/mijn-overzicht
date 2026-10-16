@@ -1,5 +1,9 @@
 Atelier Serif is a subset of Noto Serif Display.
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
+
 Atelier Sans is a subset of Inter.
+Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+
 Both upstream fonts are licensed under the SIL Open Font License, Version 1.1.
 The full license text follows.
 

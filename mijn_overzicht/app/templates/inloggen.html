@@ -3,6 +3,9 @@
 {% block inhoud %}
 <h1>Mijn Overzicht</h1>
 <p>Alleen voor jou, op dit netwerk.</p>
+{% if zonder_wachtwoord %}
+<p>Er is geen wachtwoord ingesteld. Dat gebeurt na het terugzetten van een back-up. Zet een wachtwoord van minstens 8 tekens in de add-on en start de add-on opnieuw.</p>
+{% endif %}
 {% if wacht %}
 <p class="wacht">Te veel pogingen. Wacht {{ wacht }} seconden.</p>
 {% endif %}
