@@ -36,7 +36,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 # Hoort gelijk te lopen met version in config.yaml. In Home Assistant wint het
 # versienummer dat de Supervisor heeft geïnstalleerd; anders deze fallback.
-VERSIE_FALLBACK = "0.1.7"
+VERSIE_FALLBACK = "0.1.8"
 VERSIE = os.environ.get("ADDON_VERSION") or VERSIE_FALLBACK
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -2172,13 +2172,15 @@ def index():
         for rij in netto_rijen
         if rij["netto_cent"] is not None
     ]
+    netto = sum(netto_waarden) if netto_waarden else None
     context = {
         "maand": maand,
         "jaar": jaar,
         "aantal_lasten": len(lasten_rijen),
         "agenda_items": agenda(conn),
         "opzeggen": opzeg_lijst(conn),
-        "netto": sum(netto_waarden) if netto_waarden else None,
+        "netto": netto,
+        "over": None if netto is None else netto - maand,
         "via_opties": optie_wachtwoord_actief(),
         "minimum": WACHTWOORD_MINIMUM,
     }

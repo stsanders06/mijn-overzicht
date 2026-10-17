@@ -211,6 +211,31 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   color: #f3c7a8;
   overflow-wrap: anywhere;
 }
+.rekensom { display: flex; flex-direction: column; gap: var(--ruimte-2); }
+.reken-rij {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--ruimte-3);
+  min-width: 0;
+}
+.reken-rij span { min-width: 0; overflow-wrap: break-word; }
+.rekensom .bedrag {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.reken-rij.plus .bedrag { color: var(--ok); }
+.reken-rij.min .bedrag,
+.reken-rij.tekort .bedrag { color: var(--gevaar); }
+.reken-lijn {
+  border-top: 1px solid var(--lijn);
+  margin: var(--ruimte-1) 0;
+}
+.reken-rij.uitkomst { font-weight: 700; }
+.reken-rij.uitkomst .bedrag {
+  font-family: "Atelier Serif", "Liberation Serif", serif;
+  font-size: 1.25rem;
+}
 .rij-link {
   display: flex;
   flex-wrap: wrap;

@@ -41,7 +41,7 @@ jobs:
         run: |
           docker build \
             --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20 \
-            --build-arg BUILD_VERSION=0.1.7 \
+            --build-arg BUILD_VERSION=0.1.8 \
             --tag mijn-overzicht:test \
             ./mijn_overzicht
 

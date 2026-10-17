@@ -21,7 +21,32 @@ PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
 def test_verse_database_toont_nul(client):
     tekst = client.get("/").get_data(as_text=True)
     assert "€ 0,00" in tekst
+    assert "− € 0,00" in tekst
+    assert "Over per maand" in tekst
+    assert "Tekort per maand" not in tekst
     assert "Nog geen" not in tekst or "0 vaste lasten" in tekst
+
+
+def test_dashboard_rekent_plus_en_min(post, client):
+    post("/inkomen/nieuw", data={
+        "werkgever": "Bakkerij", "netto": "2000", "soort": "loon", "frequentie": "maand",
+    })
+    post("/inkomen/nieuw", data={
+        "netto": "100", "soort": "toeslag", "toeslag": "zorgtoeslag", "frequentie": "maand",
+    })
+    post("/lasten/nieuw", data={"naam": "Huur", "categorie": "Wonen", "bedrag": "800", "frequentie": "maand"})
+    tekst = client.get("/").get_data(as_text=True)
+    assert "+ € 2.100,00" in tekst
+    assert "− € 800,00" in tekst
+    assert "Over per maand" in tekst
+    assert "+ € 1.300,00" in tekst
+    assert "- €" not in tekst
+    post("/lasten/nieuw", data={"naam": "Extra", "categorie": "Overig", "bedrag": "2000", "frequentie": "maand"})
+    tekst = client.get("/").get_data(as_text=True)
+    assert "Tekort per maand" in tekst
+    assert "− € 2.800,00" in tekst
+    assert "− € 700,00" in tekst
+    assert "Over per maand" not in tekst
 
 
 def test_totalen_rekenen_maand_kwartaal_en_jaar_omgerekend(post, client):

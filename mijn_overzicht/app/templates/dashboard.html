@@ -4,15 +4,25 @@
 <header class="kop">
   <div>
     <h1>Dashboard</h1>
-    <p class="lead">Vaste lasten, wat er binnenkort afloopt, en wat je nog kunt opzeggen.</p>
+    <p class="lead">Inkomen tegenover vaste lasten, wat er binnenkort afloopt, en wat je nog kunt opzeggen.</p>
   </div>
 </header>
-<section class="cijfers">
-  <article class="cijfer"><small>Per maand</small><b class="bedrag">€ {{ maand|bedrag }}</b></article>
-  <article class="cijfer"><small>Per jaar</small><b class="bedrag">€ {{ jaar|bedrag }}</b></article>
-  <article class="cijfer"><small>Netto per maand</small><b class="bedrag">{% if netto is not none %}€ {{ netto|bedrag }}{% else %}—{% endif %}</b></article>
+<section class="kaart rekensom" aria-label="Inkomen min lasten">
+  <div class="reken-rij plus">
+    <span>Inkomen</span>
+    <b class="bedrag">{% if netto is not none %}+ € {{ netto|bedrag }}{% else %}—{% endif %}</b>
+  </div>
+  <div class="reken-rij min">
+    <span>Lasten</span>
+    <b class="bedrag">− € {{ maand|bedrag }}</b>
+  </div>
+  <div class="reken-lijn"></div>
+  <div class="reken-rij uitkomst{% if over is not none and over < 0 %} tekort{% elif over is not none and over > 0 %} plus{% endif %}">
+    <span>{% if over is not none and over < 0 %}Tekort per maand{% else %}Over per maand{% endif %}</span>
+    <b class="bedrag">{% if over is none %}—{% elif over < 0 %}− € {{ (0 - over)|bedrag }}{% elif over > 0 %}+ € {{ over|bedrag }}{% else %}€ {{ over|bedrag }}{% endif %}</b>
+  </div>
 </section>
-<p class="stil">{{ aantal_lasten }} vaste last{% if aantal_lasten != 1 %}en{% endif %}. Premies die bij een verzekering horen tellen één keer mee.</p>
+<p class="stil">Lasten per jaar € {{ jaar|bedrag }}. {{ aantal_lasten }} vaste last{% if aantal_lasten != 1 %}en{% endif %}. Premies die bij een verzekering horen tellen één keer mee.</p>
 
 <section class="kaart">
   <h2>Binnenkort</h2>

@@ -153,6 +153,83 @@ def test_webkit_breedtes_menu_en_tikvlakken(app):
         server.shutdown()
 
 
+def _rekensom_past(page):
+    return page.evaluate(
+        """() => {
+          const kaart = document.querySelector(".rekensom");
+          const problemen = [];
+          const doc = document.documentElement;
+          if (!kaart) return ["geen rekensom"];
+          if (doc.scrollWidth > doc.clientWidth + 1) problemen.push("overflow " + doc.scrollWidth);
+          const kaartR = kaart.getBoundingClientRect();
+          const pad = parseFloat(getComputedStyle(kaart).paddingRight);
+          for (const rij of kaart.querySelectorAll(".reken-rij")) {
+            const label = rij.querySelector("span");
+            const bedrag = rij.querySelector(".bedrag");
+            const a = label.getBoundingClientRect();
+            const b = bedrag.getBoundingClientRect();
+            const naam = (label.textContent || "").trim();
+            if (a.left < -1 || b.left < -1 || b.right > window.innerWidth + 1 || a.right > window.innerWidth + 1) {
+              problemen.push("buiten " + naam);
+            }
+            const x = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+            const y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+            if (x > 2 && y > 2) problemen.push("overlap " + naam);
+            if (Math.abs(b.right - (kaartR.right - pad)) > 1.5) problemen.push("niet rechts " + naam);
+            if (!getComputedStyle(bedrag).fontVariantNumeric.includes("tabular-nums")) problemen.push("geen tabular " + naam);
+          }
+          return problemen;
+        }"""
+    )
+
+
+def test_webkit_dashboard_rekensom(app, post):
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    post("/inkomen/nieuw", data={
+        "werkgever": "Bakkerij", "netto": "2000", "soort": "loon", "frequentie": "maand",
+    })
+    post("/inkomen/nieuw", data={
+        "netto": "100", "soort": "toeslag", "toeslag": "zorgtoeslag", "frequentie": "maand",
+    })
+    post("/lasten/nieuw", data={"naam": "Huur", "categorie": "Wonen", "bedrag": "800", "frequentie": "maand"})
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    basis = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with playwright_sync.sync_playwright() as pw:
+            browser = pw.webkit.launch()
+            for breedte in (320, 390):
+                page = browser.new_page(viewport={"width": breedte, "height": 844})
+                page.set_default_timeout(8000)
+                page.goto(basis + "/inloggen")
+                page.fill("#wachtwoord", TEST_WACHTWOORD)
+                page.click("button[type=submit]")
+                page.wait_for_selector("h1")
+                page.goto(basis + "/")
+                page.wait_for_selector(".rekensom")
+                assert "+ € 2.100,00" in page.content()
+                assert "− € 800,00" in page.content()
+                assert "Over per maand" in page.inner_text(".rekensom")
+                assert not _rekensom_past(page), (breedte, "plus", _rekensom_past(page))
+                page.close()
+            post("/lasten/nieuw", data={"naam": "Extra", "categorie": "Overig", "bedrag": "2000", "frequentie": "maand"})
+            for breedte in (320, 390):
+                page = browser.new_page(viewport={"width": breedte, "height": 844})
+                page.set_default_timeout(8000)
+                page.goto(basis + "/inloggen")
+                page.fill("#wachtwoord", TEST_WACHTWOORD)
+                page.click("button[type=submit]")
+                page.wait_for_selector(".rekensom")
+                assert "Tekort per maand" in page.inner_text(".rekensom")
+                assert "− € 700,00" in page.content()
+                assert not _rekensom_past(page), (breedte, "tekort", _rekensom_past(page))
+                page.close()
+            browser.close()
+    finally:
+        server.shutdown()
+
+
 def _verwacht_inkomen_soort(page, toeslag):
     assert page.is_visible("#soort")
     assert page.is_visible("#betaaldag")

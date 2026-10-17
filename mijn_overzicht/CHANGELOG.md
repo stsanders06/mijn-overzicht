@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.8
+
+- Op het overzicht staan inkomen en vaste lasten als een rekensom. Inkomen heeft een plus, lasten een minteken, en daaronder staat wat er per maand overblijft. Een negatief bedrag heet tekort. Toeslagen tellen mee bij het inkomen.
+
 ## 0.1.7
 
 - Bij inkomen (nieuw en bewerken) zie je Toeslag en de hint alleen als Soort Toeslag is. Contracturen horen bij loon en verdwijnen bij een toeslag; een toeslag bewaart ze niet. Zonder JavaScript blijven die velden zichtbaar.
