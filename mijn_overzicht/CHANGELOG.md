@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+
+- Inloggen mislukte als op dezelfde computer ook een andere site openstond, zoals de facturen-app. Beide gebruikten het cookie `session`. De browser houdt cookies niet uit elkaar per poort, dus de ene site overschreef de ander. Het cookie heet nu `mijn_overzicht_session`. Na het bijwerken moet je één keer opnieuw inloggen.
+- Ontbreekt dat cookie bij het inloggen, dan ga je terug naar de inlogpagina met “Probeer het nog een keer”. Een verkeerd kenmerk blijft afgewezen.
+
 ## 0.1.8
 
 - Op het overzicht staan inkomen en vaste lasten als een rekensom. Inkomen heeft een plus, lasten een minteken, en daaronder staat wat er per maand overblijft. Een negatief bedrag heet tekort. Toeslagen tellen mee bij het inkomen.

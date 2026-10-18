@@ -16,6 +16,7 @@ import urllib.request
 
 
 WACHTWOORD = os.environ.get("ROOK_WACHTWOORD", "rooktest-wachtwoord")
+SESSIE_KOEK = "mijn_overzicht_session"
 
 
 def afbreken(tekst):
@@ -121,8 +122,8 @@ def verknipt_post(basis):
         if jar is None:
             continue
         for stuk in jar:
-            if stuk.name == "session":
-                koek = f"session={stuk.value}"
+            if stuk.name == SESSIE_KOEK:
+                koek = f"{SESSIE_KOEK}={stuk.value}"
     lichaam = urllib.parse.urlencode({
         "csrf_token": token,
         "wachtwoord": WACHTWOORD,
@@ -196,7 +197,7 @@ def _koek_uit(kop, vorige=""):
     for regel in kop.split("\r\n"):
         if regel.lower().startswith("set-cookie:"):
             deel = regel.split(":", 1)[1].strip().split(";", 1)[0]
-            if deel.startswith("session="):
+            if deel.startswith(SESSIE_KOEK + "="):
                 koek = deel
     return koek
 
