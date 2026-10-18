@@ -16,16 +16,20 @@ from conftest import TEST_HASH, TEST_WACHTWOORD
 import main as overzicht
 
 
+def _koeknaam():
+    return overzicht.app.config["SESSION_COOKIE_NAME"]
+
+
 def _koek(browser):
     browser.get("/")
-    koek = browser.get_cookie("session")
+    koek = browser.get_cookie(_koeknaam())
     assert koek is not None
     return koek.value
 
 
 def _andere_client(app, waarde):
     ander = app.test_client()
-    ander.set_cookie("session", waarde)
+    ander.set_cookie(_koeknaam(), waarde)
     return ander
 
 
@@ -522,11 +526,102 @@ def test_term_eindigt_met_code_0(caplog):
 def test_post_zonder_csrf_wordt_geweigerd(client):
     antwoord = client.post("/lasten/nieuw", data={"naam": "Huur"})
     assert antwoord.status_code == 400
+    tekst = antwoord.get_data(as_text=True)
+    assert "Deze opdracht kwam niet van de app zelf." in tekst
+    assert ">Terug<" in tekst
+    assert "Bad Request" not in tekst
+    assert "opmaak.css" in tekst
+
+
+def test_verkeerd_csrf_token_blijft_geweigerd(uitgelogde_client):
+    antwoord = uitgelogde_client.post(
+        "/inloggen",
+        data={"csrf_token": "test-tokex", "wachtwoord": TEST_WACHTWOORD},
+    )
+    assert antwoord.status_code == 400
+    tekst = antwoord.get_data(as_text=True)
+    assert "Deze opdracht kwam niet van de app zelf." in tekst
+    assert ">Terug<" in tekst
+    assert "Probeer het nog een keer" not in tekst
+    assert "Bad Request" not in tekst
+    assert uitgelogde_client.get("/").status_code == 302
+
+
+def test_inloggen_zonder_csrf_in_de_sessie_vraagt_opnieuw(app):
+    with app.test_client() as browser:
+        antwoord = browser.post(
+            "/inloggen",
+            data={"csrf_token": "ontbreekt", "wachtwoord": TEST_WACHTWOORD, "verder": "/lasten"},
+            follow_redirects=False,
+        )
+        assert antwoord.status_code == 302
+        assert antwoord.headers["Location"].endswith("/inloggen?verder=/lasten")
+        pagina = browser.get(antwoord.headers["Location"])
+        tekst = pagina.get_data(as_text=True)
+        assert "Probeer het nog een keer" in tekst
+        assert "Inloggen" in tekst
+        token = tekst.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+        gelukt = browser.post(
+            "/inloggen",
+            data={"csrf_token": token, "wachtwoord": TEST_WACHTWOORD},
+            follow_redirects=True,
+        )
+    assert "Dashboard" in gelukt.get_data(as_text=True)
+
+
+def test_andere_post_zonder_csrf_in_de_sessie_blijft_400(client):
+    with client.session_transaction() as sessie:
+        sessie.pop("csrf_token", None)
+    antwoord = client.post("/lasten/nieuw", data={"csrf_token": "test-token", "naam": "Huur"})
+    assert antwoord.status_code == 400
+    tekst = antwoord.get_data(as_text=True)
+    assert "Probeer het nog een keer" not in tekst
+    assert ">Terug<" in tekst
+
+
+def test_inloggen_lukt_naast_vreemd_session_koek(uitgelogde_client):
+    uitgelogde_client.set_cookie("session", "koek-van-facturen")
+    antwoord = uitgelogde_client.post(
+        "/inloggen",
+        data={"csrf_token": "test-token", "wachtwoord": TEST_WACHTWOORD},
+        follow_redirects=False,
+    )
+    assert antwoord.status_code == 302
+    assert antwoord.headers["Location"].endswith("/")
+    koek = antwoord.headers.get("Set-Cookie", "")
+    assert "mijn_overzicht_session=" in koek
+    assert not koek.startswith("session=")
+    vreemd = uitgelogde_client.get_cookie("session")
+    assert vreemd is not None
+    assert vreemd.value == "koek-van-facturen"
+    assert "Dashboard" in uitgelogde_client.get("/").get_data(as_text=True)
+
+
+def test_sessiekoek_heet_mijn_overzicht_session(app):
+    assert app.config["SESSION_COOKIE_NAME"] == "mijn_overzicht_session"
+    assert app.config["SESSION_COOKIE_HTTPONLY"] is True
+    assert app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+    assert app.config["SESSION_COOKIE_SECURE"] is False
+    assert app.config.get("SESSION_COOKIE_PATH") in (None, "/")
+    assert not app.config.get("SESSION_COOKIE_DOMAIN")
+    assert app.config.get("APPLICATION_ROOT") in (None, "/")
+    with app.test_client() as browser:
+        antwoord = browser.get("/inloggen")
+        koekjes = antwoord.headers.getlist("Set-Cookie")
+        assert len(koekjes) == 1
+        koek = koekjes[0]
+        assert koek.startswith("mijn_overzicht_session=")
+        assert "HttpOnly" in koek
+        assert "SameSite=Lax" in koek
+        assert "Path=/" in koek
+        assert "Secure" not in koek
+        assert browser.get_cookie("mijn_overzicht_session") is not None
+        assert browser.get_cookie("session") is None
 
 
 def test_wachtwoord_wijzigen_ongeldig_oude_koek(client, post, app):
     client.get("/")
-    oud = client.get_cookie("session").value
+    oud = client.get_cookie(_koeknaam()).value
     antwoord = post(
         "/wachtwoord",
         data={"huidig": TEST_WACHTWOORD, "nieuw": "ander-wachtwoord", "nogmaals": "ander-wachtwoord"},
@@ -557,7 +652,7 @@ def test_zelfde_addonwachtwoord_houdt_de_sessie(client):
 
 def test_opties_wachtwoord_wint_en_ongeldig_oude_koek(client, app, uitgelogde_client):
     client.get("/")
-    oud = client.get_cookie("session").value
+    oud = client.get_cookie(_koeknaam()).value
     pathlib.Path(overzicht.OPTIONS_PATH).write_text(
         json.dumps({"wachtwoord": "addon-wachtwoord"}), encoding="utf-8"
     )

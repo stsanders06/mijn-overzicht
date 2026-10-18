@@ -3,5 +3,9 @@
 {% block inhoud %}
 <h1>{{ titel }}</h1>
 <p>{{ tekst }}</p>
+{% if terug_url is defined %}
+<p><a class="knop" href="{{ terug_url }}">{{ terug_tekst }}</a></p>
+{% else %}
 <p><a class="knop" href="{{ url_for('index') }}">Naar het overzicht</a></p>
+{% endif %}
 {% endblock %}

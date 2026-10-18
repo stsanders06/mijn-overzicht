@@ -36,7 +36,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 # Hoort gelijk te lopen met version in config.yaml. In Home Assistant wint het
 # versienummer dat de Supervisor heeft geïnstalleerd; anders deze fallback.
-VERSIE_FALLBACK = "0.1.8"
+VERSIE_FALLBACK = "0.1.9"
 VERSIE = os.environ.get("ADDON_VERSION") or VERSIE_FALLBACK
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -300,6 +300,12 @@ app.jinja_env.undefined = StrictUndefined
 app.config["MAX_CONTENT_LENGTH"] = MAX_VERZOEK
 # Secure en HSTS gaan aan in activeer_https_vlag(), alleen als ssl aan staat.
 # Op gewoon http zou Secure het cookie blokkeren.
+# Eigen cookienaam: een browser deelt cookies per host, niet per poort. De
+# facturen-app op 8099 gebruikt anders ook "session" en overschrijft deze
+# sessie. Ingress staat uit en nginx serveert location /. Het cookiepad
+# blijft daarom de standaard (/ via APPLICATION_ROOT). Een vast pad zou een
+# latere prefix breken.
+app.config["SESSION_COOKIE_NAME"] = "mijn_overzicht_session"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = False
@@ -785,12 +791,40 @@ def controleer_csrf():
     if request.method != "POST":
         return None
     verwacht = session.get("csrf_token") or ""
+    # Een vers of overschreven cookie heeft geen kenmerk. Op de inlogpagina
+    # is dat geen aanval: stuur terug, dan maakt de pagina een nieuw kenmerk.
+    if request.endpoint == "inloggen" and not verwacht:
+        melding("Probeer het nog een keer", "fout")
+        verder = request.form.get("verder", "")
+        if not isinstance(verder, str):
+            verder = ""
+        return redirect(url_for("inloggen", verder=verder))
     gekregen = request.form.get("csrf_token", "")
     if not isinstance(gekregen, str) or not verwacht or len(verwacht) != len(gekregen):
         abort(400, "Deze opdracht kwam niet van de app zelf.")
     if not secrets.compare_digest(verwacht, gekregen):
         abort(400, "Deze opdracht kwam niet van de app zelf.")
     return None
+
+
+@app.errorhandler(400)
+def ongeldige_opdracht(fout):
+    tekst = getattr(fout, "description", None) or ""
+    if tekst != "Deze opdracht kwam niet van de app zelf.":
+        tekst = "Deze opdracht klopt niet."
+    if sessie_geldig():
+        doel = terug_naar()
+    else:
+        doel = terug_naar(url_for("inloggen"))
+    return pagina(
+        "fout.html",
+        "",
+        status=400,
+        titel="Mislukt",
+        tekst=tekst,
+        terug_url=doel,
+        terug_tekst="Terug",
+    )
 
 
 @app.errorhandler(404)

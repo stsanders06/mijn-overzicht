@@ -26,12 +26,16 @@ def _lichaam(kop, rest):
     return uit
 
 
+SESSIE_KOEK = "mijn_overzicht_session"
+
+
 def _koek(kop, vorige=""):
     koek = vorige
+    voorvoegsel = SESSIE_KOEK + "="
     for regel in kop.split("\r\n"):
         if regel.lower().startswith("set-cookie:"):
             deel = regel.split(":", 1)[1].strip().split(";", 1)[0]
-            if deel.startswith("session="):
+            if deel.startswith(voorvoegsel):
                 koek = deel
     return koek
 
